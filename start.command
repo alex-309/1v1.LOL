@@ -32,4 +32,9 @@ if need_download; then
   fi
 fi
 
-exec python3 server.py "$@"
+# If an older copy of THIS server still holds the port, stop it and take over.
+# It is verified over HTTP that the process really is this game before anything
+# is stopped, so no unrelated program is ever touched. Without this, starting
+# the game after an earlier session just prints "port in use" and quits -- and
+# the old process keeps serving the OLD rules to a freshly reloaded page.
+exec python3 -u server.py --takeover "$@"

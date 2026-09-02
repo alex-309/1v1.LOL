@@ -20,9 +20,11 @@ import math
 import mimetypes
 import os
 import random
+import signal
 import socket
 import socketserver
 import struct
+import subprocess
 import sys
 import threading
 import time
@@ -30,6 +32,12 @@ import traceback
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+
+# Bumped on every change to the rules the client mirrors. The client carries the
+# same stamp and shouts if the two disagree -- editing index.html and forgetting
+# to restart server.py leaves the old rules in charge, and the symptom (pieces
+# floating that the ghost said were illegal) looks exactly like a code bug.
+BUILD_ID = "BUILD 2026-09-01 20:40"
 TICK_HZ = 30.0
 TICK_DT = 1.0 / TICK_HZ
 
@@ -58,6 +66,8 @@ CONFIG = {
     "CELL_Y_MAX": 30,
     "CELL_XZ_MAX": 40,
     "PIECE_LIMIT": 2000,
+    "ROOF_H": 2.0,           # cone height -- deliberately shorter than a full cell
+    "RAMP_T": 0.6,           # ramp is a slanted SLAB, not a solid wedge
     "BUILD_IN_TIME": 0.2,    # scale/fade tween
 
     # --- character ---
@@ -143,6 +153,9 @@ CONFIG = {
     },
 
     "AIM_TRAINER": {"lifetime": 2.6, "gap": 0.35, "count": 3, "radius": 0.55},
+    "DUMMY_HP": 100.0,
+    "DUMMY_SHIELD": 100.0,
+    "DUMMY_RESPAWN": 4.0,
 }
 
 # ---------------------------------------------------------------------------
@@ -382,40 +395,101 @@ def tile_boxes(ptype, cx, cy, cz, direction, mask):
         return out
 
     if ptype == "ramp":
-        # Renders as a smooth slope, collides as 8 stair boxes. With step-up in
-        # the controller, walking a ramp falls out of plain AABB resolution --
-        # no slope normals, no sliding, no seam-sticking between two ramps.
+        # Renders as a smooth slanted slab, collides as 8 stair treads. With
+        # step-up in the controller, walking a ramp falls out of plain AABB
+        # resolution -- no slope normals, no sliding, no seam-sticking.
+        #
+        # Each tread is only RAMP_T thick instead of reaching all the way down
+        # to the cell floor, so a ramp is a slanted wall you can walk under --
+        # not a solid wedge that fills the whole cell.
         steps = 8
         d = CELL / steps
+        rt = CONFIG["RAMP_T"]
         for i in range(steps):
             h = (i + 1) * (CELL / steps)
+            ylo = max(y0, y0 + h - rt)
+            yhi = y0 + h
             if direction == 0:      # rises toward -Z
-                lo = [x0, y0, z0 + CELL - (i + 1) * d]
-                hi = [x0 + CELL, y0 + h, z0 + CELL - i * d]
+                lo = [x0, ylo, z0 + CELL - (i + 1) * d]
+                hi = [x0 + CELL, yhi, z0 + CELL - i * d]
             elif direction == 2:    # rises toward +Z
-                lo = [x0, y0, z0 + i * d]
-                hi = [x0 + CELL, y0 + h, z0 + (i + 1) * d]
+                lo = [x0, ylo, z0 + i * d]
+                hi = [x0 + CELL, yhi, z0 + (i + 1) * d]
             elif direction == 1:    # rises toward +X
-                lo = [x0 + i * d, y0, z0]
-                hi = [x0 + (i + 1) * d, y0 + h, z0 + CELL]
+                lo = [x0 + i * d, ylo, z0]
+                hi = [x0 + (i + 1) * d, yhi, z0 + CELL]
             else:                   # rises toward -X
-                lo = [x0 + CELL - (i + 1) * d, y0, z0]
-                hi = [x0 + CELL - i * d, y0 + h, z0 + CELL]
+                lo = [x0 + CELL - (i + 1) * d, ylo, z0]
+                hi = [x0 + CELL - i * d, yhi, z0 + CELL]
             out.append(Box(lo, hi, "piece"))
         return out
 
     if ptype == "roof":
         levels = 4
+        rh = CONFIG["ROOF_H"]
         for i in range(levels):
             inset = i * (CELL / (2.0 * levels))
-            ylo = y0 + i * (CELL / levels)
-            yhi = y0 + (i + 1) * (CELL / levels)
+            ylo = y0 + i * (rh / levels)
+            yhi = y0 + (i + 1) * (rh / levels)
             out.append(Box([x0 + inset, ylo, z0 + inset],
                            [x0 + CELL - inset, yhi, z0 + CELL - inset],
                            "piece"))
         return out
 
     return out
+
+
+# ---------------------------------------------------------------------------
+# Structural support
+#
+# Nothing may float. A piece is legal only if it rests on the arena or touches
+# something that (transitively) does. When a piece is destroyed, anything left
+# hanging is destroyed with it.
+#
+# Contact is judged on bounding boxes: two pieces are connected when they
+# genuinely share a face -- overlapping on two axes and touching on the third.
+# Corner-to-corner alone is not enough to hold weight.
+# ---------------------------------------------------------------------------
+SUPPORT_EPS = 0.06
+
+
+def piece_bounds(pc):
+    """Support is judged on the piece's FULL footprint, never its edit mask.
+    Cutting a doorway through the bottom of a wall must not delete the wall --
+    the piece still occupies its cell and still carries load."""
+    b = pc.get("sbounds")
+    if b is not None:
+        return b
+    bs = pc["boxes"]
+    if not bs:
+        return None
+    return ([min(x.lo[i] for x in bs) for i in range(3)],
+            [max(x.hi[i] for x in bs) for i in range(3)])
+
+
+def faces_touch(a, b, eps=SUPPORT_EPS):
+    if a is None or b is None:
+        return False
+    alo, ahi = a
+    blo, bhi = b
+    overlaps = 0
+    for i in range(3):
+        if alo[i] < bhi[i] - eps and ahi[i] > blo[i] + eps:
+            overlaps += 1
+        elif alo[i] - eps <= bhi[i] and ahi[i] + eps >= blo[i]:
+            pass                      # just touching on this axis
+        else:
+            return False
+    return overlaps >= 2
+
+
+def rests_on_arena(bounds):
+    if bounds is None:
+        return False
+    for ab in ARENA_BOXES:
+        if faces_touch(bounds, (ab.lo, ab.hi)):
+            return True
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -673,6 +747,7 @@ class Game(object):
         self.piece_order = []
         self.grenades = []
         self.targets = []
+        self.dummies = []
         self.next_id = 1
         self.next_gid = 1
         self.next_tid = 1
@@ -752,6 +827,63 @@ class Game(object):
                    "head", p["id"])
         return [body, head]
 
+    def spawn_dummies(self):
+        self.dummies = []
+        for i, d in enumerate(DUMMIES):
+            self.dummies.append({
+                "id": i + 1, "pos": list(d), "alive": True,
+                "hp": CONFIG["DUMMY_HP"], "shield": CONFIG["DUMMY_SHIELD"],
+                "respawn_at": 0.0,
+            })
+        self.broadcast({"t": "dummies", "d": self.wire_dummies()})
+
+    def wire_dummies(self):
+        return [{"id": d["id"], "pos": d["pos"], "alive": d["alive"],
+                 "hp": d["hp"], "shield": d["shield"]} for d in self.dummies]
+
+    def dummy_boxes(self):
+        out = []
+        w, h, hh = CONFIG["P_W"], CONFIG["P_H"], CONFIG["HEAD_H"]
+        for d in self.dummies:
+            if not d["alive"]:
+                continue
+            p = d["pos"]
+            out.append(Box([p[0] - w / 2, p[1], p[2] - w / 2],
+                           [p[0] + w / 2, p[1] + h - hh, p[2] + w / 2],
+                           "dummy", d["id"]))
+            out.append(Box([p[0] - hh / 2, p[1] + h - hh, p[2] - hh / 2],
+                           [p[0] + hh / 2, p[1] + h, p[2] + hh / 2],
+                           "dummyhead", d["id"]))
+        return out
+
+    def hit_dummy(self, did, amount, head, by_pid, at):
+        for d in self.dummies:
+            if d["id"] != did or not d["alive"]:
+                continue
+            if d["shield"] > 0:
+                used = min(d["shield"], amount)
+                d["shield"] -= used
+                amount -= used
+            if amount > 0:
+                d["hp"] -= amount
+            if d["hp"] <= 0:
+                d["alive"] = False
+                d["hp"] = 0.0
+                d["respawn_at"] = time.time() + CONFIG["DUMMY_RESPAWN"]
+            self.broadcast({"t": "dummy", "id": d["id"], "hp": d["hp"],
+                            "shield": d["shield"], "alive": d["alive"]})
+            return
+
+    def tick_dummies(self, now):
+        for d in self.dummies:
+            if not d["alive"] and d["respawn_at"] and now >= d["respawn_at"]:
+                d["alive"] = True
+                d["hp"] = CONFIG["DUMMY_HP"]
+                d["shield"] = CONFIG["DUMMY_SHIELD"]
+                d["respawn_at"] = 0.0
+                self.broadcast({"t": "dummy", "id": d["id"], "hp": d["hp"],
+                                "shield": d["shield"], "alive": True})
+
     def target_boxes(self):
         out = []
         r = CONFIG["AIM_TRAINER"]["radius"]
@@ -762,7 +894,65 @@ class Game(object):
         return out
 
     # -- building ---------------------------------------------------------
+    def piece_index(self):
+        """Pieces bucketed by cell, so support checks stay local."""
+        grid = {}
+        for k, pc in self.pieces.items():
+            grid.setdefault((pc["cx"], pc["cy"], pc["cz"]), []).append(k)
+        return grid
+
+    def neighbour_keys(self, cx, cy, cz, grid):
+        out = []
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                for dz in (-1, 0, 1):
+                    out.extend(grid.get((cx + dx, cy + dy, cz + dz), ()))
+        return out
+
+    def is_supported(self, boxes, cx, cy, cz, grid=None):
+        """True when these boxes rest on the arena or touch an existing piece.
+        Every stored piece is already supported, so touching any one of them is
+        enough -- the chain back to the ground is an invariant."""
+        bounds = ([min(b.lo[i] for b in boxes) for i in range(3)],
+                  [max(b.hi[i] for b in boxes) for i in range(3)])
+        if rests_on_arena(bounds):
+            return True
+        if grid is None:
+            grid = self.piece_index()
+        for nk in self.neighbour_keys(cx, cy, cz, grid):
+            if faces_touch(bounds, piece_bounds(self.pieces[nk])):
+                return True
+        return False
+
+    def prune_unsupported(self):
+        """Flood-fill from everything touching the arena; destroy the rest."""
+        if not self.pieces:
+            return []
+        grid = self.piece_index()
+        bounds = {k: piece_bounds(pc) for k, pc in self.pieces.items()}
+        stack = [k for k, b in bounds.items() if rests_on_arena(b)]
+        seen = set(stack)
+        while stack:
+            k = stack.pop()
+            pc = self.pieces[k]
+            for nk in self.neighbour_keys(pc["cx"], pc["cy"], pc["cz"], grid):
+                if nk in seen:
+                    continue
+                if faces_touch(bounds[k], bounds[nk]):
+                    seen.add(nk)
+                    stack.append(nk)
+        orphans = [k for k in self.pieces if k not in seen]
+        for k in orphans:
+            del self.pieces[k]
+            if k in self.piece_order:
+                self.piece_order.remove(k)
+            self.broadcast({"t": "unbuild", "key": k, "orphan": True})
+        return orphans
+
     def cell_volume_taken(self, cx, cy, cz):
+        """A cell has ONE volume slot. A ramp and a cone both fill it, so they
+        can never share a cell -- but walls and floors sit on the cell's faces
+        and stack freely alongside whichever volume piece is there."""
         return (piece_key("ramp", cx, cy, cz) in self.pieces or
                 piece_key("roof", cx, cy, cz) in self.pieces)
 
@@ -788,17 +978,30 @@ class Game(object):
             return None
 
         boxes = tile_boxes(ptype, cx, cy, cz, direction, FULL_MASK)
-        # Never trap a living player inside a piece.
+        # Never trap a living player inside a piece -- but ignore the bottom of
+        # the body box, so dropping a floor at your own feet still works the way
+        # it does in the games this borrows from.
         for other in self.players.values():
             if not other["alive"]:
                 continue
             lo, hi = player_aabb(other["pos"], other["crouch"])
+            lo = [lo[0], lo[1] + 0.35, lo[2]]
             for b in boxes:
                 if b.overlaps(lo, hi):
                     return None
 
-        # Reach check from the placing player.
-        cc = [cx * CELL + CELL / 2, cy * CELL + CELL / 2, cz * CELL + CELL / 2]
+        # No floating builds: it must rest on the arena or touch something that
+        # already does.
+        if not self.is_supported(boxes, cx, cy, cz):
+            return None
+
+        # Reach check, measured to the piece's ACTUAL centre rather than to the
+        # centre of its key cell. For a wall those differ by a full cell -- the
+        # canonical cell sits behind the plane -- which made wall range depend
+        # on which way you were facing.
+        plo = [min(b.lo[i] for b in boxes) for i in range(3)]
+        phi = [max(b.hi[i] for b in boxes) for i in range(3)]
+        cc = [(plo[i] + phi[i]) / 2.0 for i in range(3)]
         if v_dist(cc, p["pos"]) > CONFIG["BUILD_REACH"] + CELL:
             return None
 
@@ -810,7 +1013,9 @@ class Game(object):
 
         pc = {"key": key, "type": ptype, "cx": cx, "cy": cy, "cz": cz,
               "dir": direction, "hp": CONFIG["PIECE_HP"], "owner": p["id"],
-              "mask": FULL_MASK, "boxes": boxes, "t": time.time()}
+              "mask": FULL_MASK, "boxes": boxes, "t": time.time(),
+              "sbounds": ([min(b.lo[i] for b in boxes) for i in range(3)],
+                          [max(b.hi[i] for b in boxes) for i in range(3)])}
         self.pieces[key] = pc
         self.piece_order.append(key)
         if not infinite:
@@ -835,6 +1040,7 @@ class Game(object):
             if key in self.piece_order:
                 self.piece_order.remove(key)
             self.broadcast({"t": "unbuild", "key": key})
+            self.prune_unsupported()      # anything it was holding up goes too
             breaker = self.players.get(by_pid)
             if breaker and self.mode != "build":
                 breaker["mats"] = min(CONFIG["MAT_CAP"],
@@ -850,6 +1056,12 @@ class Game(object):
         if pc["type"] not in ("wallX", "wallZ", "floor"):
             return
         mask &= FULL_MASK
+        if mask == 0:
+            # Editing every tile away would leave an invisible piece that still
+            # occupies its cell and still holds up whatever is stacked on it --
+            # a wall you cannot see, cannot shoot and cannot rebuild over. A
+            # piece is destroyed by damage, never by editing.
+            return
         pc["mask"] = mask
         pc["boxes"] = tile_boxes(pc["type"], pc["cx"], pc["cy"], pc["cz"], pc["dir"], mask)
         self.broadcast({"t": "editbuild", "key": key, "mask": mask})
@@ -977,6 +1189,9 @@ class Game(object):
             p["deaths"] = 0
             p["spectator"] = False
         parts = self.participants()
+        self.dummies = []
+        if mode == "build":
+            self.spawn_dummies()
         if mode == "duel":
             for i, p in enumerate(parts):
                 p["spectator"] = i >= 2
@@ -998,6 +1213,8 @@ class Game(object):
         self.wipe_builds()
         self.grenades = []
         self.targets = []
+        self.dummies = []
+        self.broadcast({"t": "dummies", "d": []})
         for p in self.players.values():
             p["alive"] = False
             p["spectator"] = False
@@ -1039,6 +1256,10 @@ class Game(object):
             self.send_to(p["id"], {"t": "you", "ammo": p["ammo"]})
         p["last_shot"][weapon] = now
         p["reloading"] = None
+        # Keep the server's view of the held weapon in step with what is
+        # actually being fired, so a reload can never target a different gun
+        # than the one that just went empty.
+        p["hand"] = weapon
 
         # Fire from the player's own eye, not the client-claimed origin, but
         # keep the claimed direction. Range/rate/ammo are ours; aim is theirs.
@@ -1051,6 +1272,8 @@ class Game(object):
         boxes = self.collision_boxes(exclude_pid=p["id"], include_players=True)
         if self.mode == "aim":
             boxes.extend(self.target_boxes())
+        if self.dummies:
+            boxes.extend(self.dummy_boxes())
         piece_lookup = {}
         for key, pc in self.pieces.items():
             for b in pc["boxes"]:
@@ -1095,6 +1318,14 @@ class Game(object):
                                            "pos": end})
             elif box.kind == "piece":
                 self.damage_piece(box.ref, w["build_dmg"], p["id"])
+                self.send_to(p["id"], {"t": "hit", "kind": "piece",
+                                       "dmg": round(w["build_dmg"]), "pos": end})
+            elif box.kind in ("dummy", "dummyhead"):
+                head = box.kind == "dummyhead"
+                dmg = w["dmg"] * (w["head_mult"] if head else 1.0)
+                self.hit_dummy(box.ref, dmg, head, p["id"], end)
+                self.send_to(p["id"], {"t": "hit", "kind": "dummy", "target": box.ref,
+                                       "dmg": round(dmg), "head": head, "pos": end})
             elif box.kind == "target":
                 self.hit_target(box.ref, p)
 
@@ -1111,21 +1342,29 @@ class Game(object):
         p["last_shot"]["pickaxe"] = now
         eye = [p["pos"][0], p["pos"][1] + CONFIG["EYE"], p["pos"][2]]
         boxes = self.collision_boxes(exclude_pid=p["id"], include_players=True)
+        if self.dummies:
+            boxes.extend(self.dummy_boxes())
         for key, pc in self.pieces.items():
             for b in pc["boxes"]:
                 b.ref = key
         t, box = raycast(eye, v_norm(direction), boxes, w["range"], skip_ref=p["id"])
         if box is None:
             return
+        end = v_add(eye, v_scale(v_norm(direction), t))
         if box.kind in ("body", "head"):
             target = self.players.get(box.ref)
             if target and target["alive"]:
                 self.apply_damage(target, w["dmg"], p["id"], box.kind == "head")
                 self.send_to(p["id"], {"t": "hit", "target": box.ref,
-                                       "dmg": round(w["dmg"]), "head": False,
-                                       "pos": v_add(eye, v_scale(v_norm(direction), t))})
+                                       "dmg": round(w["dmg"]), "head": False, "pos": end})
+        elif box.kind in ("dummy", "dummyhead"):
+            self.hit_dummy(box.ref, w["dmg"], False, p["id"], end)
+            self.send_to(p["id"], {"t": "hit", "kind": "dummy", "target": box.ref,
+                                   "dmg": round(w["dmg"]), "head": False, "pos": end})
         elif box.kind == "piece":
             self.damage_piece(box.ref, w["build_dmg"], p["id"])
+            self.send_to(p["id"], {"t": "hit", "kind": "piece",
+                                   "dmg": round(w["build_dmg"]), "pos": end})
 
     def throw_grenade(self, p, origin, direction):
         w = CONFIG["WEAPONS"]["grenade"]
@@ -1403,6 +1642,9 @@ class Game(object):
         if self.mode == "aim" and self.phase == "live":
             self.tick_aim(now)
 
+        if self.dummies:
+            self.tick_dummies(now)
+
         # fall-off deaths for humans (their client stops sending once dead)
         for p in self.players.values():
             if p["alive"] and not p["bot"] and p["pos"][1] < CONFIG["KILL_Y"]:
@@ -1507,7 +1749,7 @@ class Game(object):
             return
 
         if t == "reload":
-            h = p["hand"]
+            h = m.get("w") if m.get("w") in CONFIG["WEAPONS"] else p["hand"]
             w = CONFIG["WEAPONS"].get(h)
             if w and w["mag"] > 0 and p["ammo"].get(h, 0) < w["mag"] and not p["reloading"]:
                 p["reloading"] = h
@@ -1590,6 +1832,7 @@ class Handler(socketserver.BaseRequestHandler):
 
     # -- request parsing ---------------------------------------------------
     def _read_request(self):
+        self._leftover = b""
         buf = bytearray()
         self.request.settimeout(15.0)
         while b"\r\n\r\n" not in buf:
@@ -1610,6 +1853,11 @@ class Handler(socketserver.BaseRequestHandler):
             if ":" in line:
                 k, v = line.split(":", 1)
                 headers[k.strip().lower()] = v.strip()
+        # Anything already read past the blank line belongs to the next layer.
+        # A client may pack its first WebSocket frame into the same TCP segment
+        # as the upgrade request; dropping those bytes loses the frame and
+        # desyncs the stream permanently.
+        self._leftover = rest
         return method, path, headers
 
     def _handle(self):
@@ -1656,6 +1904,16 @@ class Handler(socketserver.BaseRequestHandler):
             rel = unquote(rel)
         except Exception:
             pass
+
+        # Identity endpoint. A launcher that finds the port busy uses this to
+        # tell "an older copy of me" apart from some unrelated program, so it
+        # can offer to take the port over instead of just giving up.
+        if rel == "/whoami":
+            body = json.dumps({"app": "build-fighter", "build": BUILD_ID,
+                               "pid": os.getpid()}).encode()
+            self._send_http(200, "OK", body, "application/json",
+                            head_only=head_only)
+            return
 
         if rel == "/favicon.ico":
             self._send_http(200, "OK", FAVICON_BYTES, "image/svg+xml",
@@ -1711,6 +1969,7 @@ class Handler(socketserver.BaseRequestHandler):
             pass
 
         reader = FrameReader(sock)
+        reader.buf.extend(getattr(self, "_leftover", b""))
         pid = None
         client = None
         last_rx = time.time()
@@ -1759,10 +2018,12 @@ class Handler(socketserver.BaseRequestHandler):
                             GAME.host = pid
                         client.send({
                             "t": "welcome", "id": pid, "host": GAME.host,
+                            "build": BUILD_ID,
                             "config": CONFIG, "arena": ARENA, "spawns": SPAWNS,
-                            "dummies": DUMMIES, "mode": GAME.mode, "phase": GAME.phase,
+                            "mode": GAME.mode, "phase": GAME.phase,
                             "players": [GAME.public_player(q) for q in GAME.players.values()],
                             "pieces": [GAME.wire_piece(pc) for pc in GAME.pieces.values()],
+                            "dummies": GAME.wire_dummies(),
                         })
                         GAME.broadcast({"t": "join", "p": GAME.public_player(p)},
                                        exclude=pid)
@@ -1820,25 +2081,181 @@ def tick_loop(stop):
             stop.wait(slp)
 
 
+def whos_on_port(port, timeout=1.5):
+    """Ask whatever holds `port` whether it is a copy of this server.
+
+    Returns its {build, pid} or None. Identity comes from the process itself
+    over HTTP rather than from a PID lookup, so we can never mistake an
+    unrelated program for our own and stop it.
+    """
+    try:
+        c = socket.create_connection(("127.0.0.1", port), timeout=timeout)
+    except OSError:
+        return None
+    try:
+        c.settimeout(timeout)
+        c.sendall(b"GET /whoami HTTP/1.1\r\nHost: 127.0.0.1\r\n"
+                  b"Connection: close\r\n\r\n")
+        buf = b""
+        while len(buf) < 65536:
+            chunk = c.recv(4096)
+            if not chunk:
+                break
+            buf += chunk
+    except OSError:
+        return None
+    finally:
+        try:
+            c.close()
+        except OSError:
+            pass
+    if b"\r\n\r\n" not in buf:
+        return None
+    try:
+        info = json.loads(buf.split(b"\r\n\r\n", 1)[1].decode("utf-8", "replace"))
+    except ValueError:
+        return None
+    if not isinstance(info, dict) or info.get("app") != "build-fighter":
+        return None
+    if not isinstance(info.get("pid"), int):
+        return None
+    return info
+
+
+def _http_get(port, path, timeout=1.5):
+    try:
+        c = socket.create_connection(("127.0.0.1", port), timeout=timeout)
+    except OSError:
+        return None
+    try:
+        c.settimeout(timeout)
+        c.sendall(("GET %s HTTP/1.1\r\nHost: 127.0.0.1\r\n"
+                   "Connection: close\r\n\r\n" % path).encode())
+        buf = b""
+        while len(buf) < 400000:
+            chunk = c.recv(8192)
+            if not chunk:
+                break
+            buf += chunk
+        return buf
+    except OSError:
+        return None
+    finally:
+        try:
+            c.close()
+        except OSError:
+            pass
+
+
+def pid_on_port(port):
+    """The listening pid, via lsof. Only used as a fallback for a copy of this
+    server old enough to predate /whoami."""
+    try:
+        out = subprocess.run(
+            ["lsof", "-nP", "-iTCP:%d" % port, "-sTCP:LISTEN", "-t"],
+            capture_output=True, text=True, timeout=5).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    pids = [int(x) for x in out.split() if x.strip().isdigit()]
+    return pids[0] if pids else None
+
+
+def occupant(port):
+    """Who holds `port`? Returns {"pid","build"} for a copy of this server.
+
+    A version new enough to answer /whoami identifies itself outright. An older
+    one does not have that endpoint, so it is recognised by the page it serves
+    -- which is exactly the case that matters, because an old process is the one
+    running stale rules.
+    """
+    info = whos_on_port(port)
+    if info:
+        return info
+    body = _http_get(port, "/")
+    if not body or b'id="buildid"' not in body:
+        return None
+    pid = pid_on_port(port)
+    if pid is None:
+        return None
+    return {"pid": pid, "build": None}
+
+
+def stop_pid(pid, timeout=6.0):
+    """SIGTERM, wait for the port owner to actually exit, then SIGKILL."""
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except OSError:
+        return False
+    end = time.time() + timeout
+    while time.time() < end:
+        time.sleep(0.15)
+        try:
+            os.kill(pid, 0)
+        except OSError:
+            return True
+    try:
+        os.kill(pid, signal.SIGKILL)
+        time.sleep(0.4)
+    except OSError:
+        pass
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return True
+    return False
+
+
 def main():
     ap = argparse.ArgumentParser(description="Build-Fighter game server")
-    ap.add_argument("--port", type=int, default=8080)
+    # NOT 8080: on this machine something intercepts that port -- plain HTTP
+    # passes but the WebSocket upgrade is broken, which looks like the game
+    # loading and then hanging at "Connecting...". 8080 is a common transparent
+    # proxy port. Use --port 8080 only if you know yours is clear.
+    ap.add_argument("--port", type=int, default=7777)
     ap.add_argument("--host", default="0.0.0.0")
+    ap.add_argument("--takeover", action="store_true",
+                    help="if an older copy of THIS server holds the port, stop it "
+                         "and take over (never touches any other program)")
     args = ap.parse_args()
 
     if not os.path.isfile(os.path.join(HERE, "index.html")):
         print("!! index.html is missing from %s" % HERE)
         return 1
 
-    try:
-        srv = Server((args.host, args.port), Handler)
-    except OSError as e:
-        if e.errno in (errno.EADDRINUSE, 48):
-            print("!! Port %d is already in use." % args.port)
-            print("   Something else is on it (maybe an older copy of this server).")
-            print("   Try:  python3 server.py --port %d" % (args.port + 1))
-            return 1
-        raise
+    srv = None
+    for attempt in (1, 2):
+        try:
+            srv = Server((args.host, args.port), Handler)
+            break
+        except OSError as e:
+            if e.errno not in (errno.EADDRINUSE, 48):
+                raise
+            other = occupant(args.port)
+            if other is None:
+                print("!! Port %d is already in use by something that is not this"
+                      % args.port)
+                print("   game. Try:  python3 server.py --port %d" % (args.port + 1))
+                return 1
+            same = (other.get("build") == BUILD_ID)
+            print("!! Port %d is held by %s copy of this server (pid %d, %s)."
+                  % (args.port,
+                     "another" if same else "an OLDER",
+                     other["pid"], other.get("build") or "version unknown - predates build stamps"))
+            if not args.takeover or attempt == 2:
+                print("   That old process is still running the OLD game rules, so")
+                print("   editing server.py changes nothing until it is stopped.")
+                print("   Stop it with:   kill %d" % other["pid"])
+                print("   Or start this one anyway on another port:")
+                print("                   python3 server.py --port %d" % (args.port + 1))
+                return 1
+            print("   Stopping it and taking the port over...")
+            if not stop_pid(other["pid"]):
+                print("   !! Could not stop pid %d. Run:  kill -9 %d"
+                      % (other["pid"], other["pid"]))
+                return 1
+            print("   Stopped. Starting fresh.")
+    if srv is None:
+        return 1
 
     stop = threading.Event()
     ticker = threading.Thread(target=tick_loop, args=(stop,), daemon=True)
@@ -1847,6 +2264,7 @@ def main():
     ip = lan_ip()
     print("")
     print("  BUILD-FIGHTER server running")
+    print("  " + BUILD_ID)
     print("  " + "-" * 46)
     print("  You:          http://localhost:%d" % args.port)
     print("  Your friend:  http://%s:%d" % (ip, args.port))
