@@ -658,7 +658,7 @@ if (!window.THREE) {
 /* =========================================================================
    0. Small utilities
    ========================================================================= */
-const BUILD_ID = 'BUILD 2026-09-01 20:40';
+const BUILD_ID = 'BUILD 2026-09-03 grid-reach + fortnite edits';
 const $ = (id) => document.getElementById(id);
 const clamp = (v, a, b) => v < a ? a : (v > b ? b : v);
 const lerp = (a, b, t) => a + (b - a) * t;
@@ -740,7 +740,81 @@ function raycast(o, d, boxes, tmax, skipRef) {
    2. Globals filled in by `welcome`
    ========================================================================= */
 let CFG = null, ARENA = null, SPAWNS = null, DUMMIES = null;
-let CELL = 4, WALL_T = 0.25, FULL = 0b111111111;
+let CELL = 4, WALL_T = 0.25;
+
+/* Edit grids -- mirrors MASK_GRID in server.py.
+
+   A piece carries a bitmask of the tiles it still has, and the grid is NOT the
+   same shape for every piece because the edits are not:
+
+     wallX / wallZ  3x3, bit r*3+c, r=0 is the TOP row      -> windows, doors
+     floor / roof   2x2, bit r*2+c, r spans +Z, c spans +X  -> a cleared
+                    quadrant is a hole you can drop through
+     ramp           2x2, bit r*2+c, r=0 is the HIGH half of the slope, c runs
+                    across it. A cleared quadrant does not vanish, it POPS UP
+                    into a flat landing at half the cell height.             */
+const MASK_GRID = { wallX: [3, 3], wallZ: [3, 3], floor: [2, 2], roof: [2, 2], ramp: [2, 2] };
+function maskGrid(type) { return MASK_GRID[type] || [3, 3]; }
+function fullMask(type) {
+  const g = maskGrid(type);
+  return (1 << (g[0] * g[1])) - 1;
+}
+/* The whole "no random edits" rule: every edit the original game actually has
+   -- window, door, doorway, half wall, side opening, floor quadrant, half
+   floor, half ramp -- is a solid rectangle of tiles. A scattered diagonal pick
+   is not, and is refused rather than quietly accepted. Mirrors
+   mask_is_rect() / edit_mask_ok() in server.py. */
+function maskIsRect(bits, rows, cols) {
+  const idx = [];
+  for (let i = 0; i < rows * cols; i++) if ((bits >> i) & 1) idx.push(i);
+  if (!idx.length) return false;
+  let r0 = 9, r1 = -1, c0 = 9, c1 = -1;
+  for (const i of idx) {
+    const r = (i / cols) | 0, c = i % cols;
+    if (r < r0) r0 = r; if (r > r1) r1 = r;
+    if (c < c0) c0 = c; if (c > c1) c1 = c;
+  }
+  return idx.length === (r1 - r0 + 1) * (c1 - c0 + 1);
+}
+function editMaskOk(type, mask) {
+  if (!MASK_GRID[type]) return false;
+  const g = maskGrid(type), full = fullMask(type);
+  if (mask & ~full) return false;
+  if (mask === full) return true;        // reset to unedited
+  if (mask === 0) return false;          // editing is not a way to delete
+  return maskIsRect(full & ~mask, g[0], g[1]);
+}
+/* Names for the shapes, so the prompt can say what you are about to make.
+   `gone` is the set of tiles being cut. Wall bits run r*3+c with r=0 the TOP
+   row, so 0..2 is the top row and 6..8 the bottom -- easy to get backwards. */
+function editName(type, mask) {
+  const full = fullMask(type), gone = full & ~mask;
+  if (!gone) return 'reset';
+  if (type === 'wallX' || type === 'wallZ') {
+    if (gone === (1 << 4)) return 'window';
+    if (gone === ((1 << 4) | (1 << 7))) return 'door';
+    if (gone === ((1 << 3) | (1 << 6))) return 'left door';
+    if (gone === ((1 << 5) | (1 << 8))) return 'right door';
+    if (gone === ((1 << 1) | (1 << 4) | (1 << 7))) return 'doorway';
+    if (gone === 0b000000111) return 'half wall';       // top row cut
+    if (gone === 0b000111000) return 'letterbox';       // middle row cut
+    if (gone === 0b111000000) return 'shoot-under';     // bottom row cut
+    if (gone === 0b000111111) return 'low wall';        // top two rows cut
+    if (gone === 0b111111000) return 'high wall';       // bottom two rows cut
+    if (gone === 0b001001001 || gone === 0b100100100) return 'side opening';
+  } else if (type === 'ramp') {
+    // r=0 is the HIGH half of the slope, so bits 0..1 are the top of the ramp
+    if (gone === 0b0011) return 'ramp + landing';       // levels off at the top
+    if (gone === 0b1100) return 'raised ramp';          // starts halfway up
+    if (gone === 0b0101 || gone === 0b1010) return 'half ramp';
+  } else {
+    if (gone === 0b0011 || gone === 0b1100 || gone === 0b0101 || gone === 0b1010) return 'half';
+  }
+  const n = (type === 'wallX' || type === 'wallZ') ? 9 : 4;
+  let k = 0;
+  for (let i = 0; i < n; i++) if ((gone >> i) & 1) k++;
+  return k === 1 ? 'single tile' : k + ' tiles';
+}
 let renderer, scene, camera, sun;
 let arenaBoxes = [];
 const pieces = new Map();        // key -> piece record
@@ -1051,14 +1125,17 @@ function buildMaterials() {
   mats.ghostBad = new THREE.MeshBasicMaterial({
     color: 0xff5470, transparent: true, opacity: 0.3, depthWrite: false,
   });
-  mats.tile = new THREE.MeshBasicMaterial({
-    color: 0x4da3ff, transparent: true, opacity: 0.34, depthWrite: false,
-    side: THREE.DoubleSide,
+  /* depthTest off, on purpose. The tile quads sit on (or inside) the very
+     piece they describe, so with depth testing on the piece wins and the grid
+     is invisible from both sides -- which is exactly what it used to be. An
+     edit grid you cannot see is not an edit grid. */
+  const tileMat = (color, opacity) => new THREE.MeshBasicMaterial({
+    color: color, transparent: true, opacity: opacity, depthWrite: false,
+    depthTest: false, side: THREE.DoubleSide,
   });
-  mats.tileSel = new THREE.MeshBasicMaterial({
-    color: 0xff5470, transparent: true, opacity: 0.5, depthWrite: false,
-    side: THREE.DoubleSide,
-  });
+  mats.tile = tileMat(0x4da3ff, 0.34);      // unselected
+  mats.tileSel = tileMat(0xff5470, 0.55);   // selected, and a legal edit
+  mats.tileNo = tileMat(0xffb03a, 0.5);     // selected, but not a real edit
   mats.target = new THREE.MeshLambertMaterial({ color: 0xff5470, emissive: 0x551020 });
   mats.dummy = new THREE.MeshLambertMaterial({ color: 0x8e9bb3 });
 }
@@ -1168,11 +1245,24 @@ function canonWall(cx, cy, cz, dir) {
 }
 const pkey = (t, cx, cy, cz) => t + ':' + cx + ',' + cy + ',' + cz;
 
-/* Collision boxes for a piece, honouring its 3x3 edit mask.
-   Mirrors tile_boxes() in server.py tile-for-tile. */
+/* Ramp-local (along-slope, across-slope) rectangle -> world x/z rectangle.
+   `s` runs 0 at the low end to 1 at the high end, `u` across the slope.
+   Mirrors _ramp_span() in server.py. */
+function rampSpan(dir, x0, z0, sLo, sHi, uLo, uHi) {
+  const sl = sLo * CELL, sh = sHi * CELL, ul = uLo * CELL, uh = uHi * CELL;
+  if (dir === 0) return [x0 + ul, x0 + uh, z0 + CELL - sh, z0 + CELL - sl];
+  if (dir === 2) return [x0 + ul, x0 + uh, z0 + sl, z0 + sh];
+  if (dir === 1) return [x0 + sl, x0 + sh, z0 + ul, z0 + uh];
+  return [x0 + CELL - sh, x0 + CELL - sl, z0 + ul, z0 + uh];
+}
+
+/* Collision boxes for a piece, honouring its edit mask.
+   Mirrors tile_boxes() in server.py tile-for-tile -- the two must agree or the
+   ghost promises placements the server then throws away. */
 function tileBoxes(type, cx, cy, cz, dir, mask) {
-  const x0 = cx * CELL, y0 = cy * CELL, z0 = cz * CELL, th = CELL / 3, out = [];
+  const x0 = cx * CELL, y0 = cy * CELL, z0 = cz * CELL, out = [];
   if (type === 'wallX' || type === 'wallZ') {
+    const th = CELL / 3;
     for (let r = 0; r < 3; r++) for (let c = 0; c < 3; c++) {
       if (!((mask >> (r * 3 + c)) & 1)) continue;
       const ylo = y0 + (2 - r) * th, yhi = ylo + th;
@@ -1187,36 +1277,52 @@ function tileBoxes(type, cx, cy, cz, dir, mask) {
     return out;
   }
   if (type === 'floor') {
-    for (let r = 0; r < 3; r++) for (let c = 0; c < 3; c++) {
-      if (!((mask >> (r * 3 + c)) & 1)) continue;
-      out.push(new Box([x0 + c * th, y0 - WALL_T / 2, z0 + r * th],
-                       [x0 + (c + 1) * th, y0 + WALL_T / 2, z0 + (r + 1) * th], 'piece'));
+    const hf = CELL / 2;
+    for (let r = 0; r < 2; r++) for (let c = 0; c < 2; c++) {
+      if (!((mask >> (r * 2 + c)) & 1)) continue;
+      out.push(new Box([x0 + c * hf, y0 - WALL_T / 2, z0 + r * hf],
+                       [x0 + (c + 1) * hf, y0 + WALL_T / 2, z0 + (r + 1) * hf], 'piece'));
     }
     return out;
   }
   if (type === 'ramp') {
     // treads only RAMP_T thick -- a slanted wall you can walk under, not a
-    // solid wedge. Must match tile_boxes() in server.py exactly.
-    const steps = 8, d = CELL / steps, rt = CFG.RAMP_T;
-    for (let i = 0; i < steps; i++) {
-      const h = (i + 1) * (CELL / steps);
-      const ylo = Math.max(y0, y0 + h - rt), yhi = y0 + h;
-      let lo, hi;
-      if (dir === 0)      { lo = [x0, ylo, z0 + CELL - (i + 1) * d]; hi = [x0 + CELL, yhi, z0 + CELL - i * d]; }
-      else if (dir === 2) { lo = [x0, ylo, z0 + i * d];              hi = [x0 + CELL, yhi, z0 + (i + 1) * d]; }
-      else if (dir === 1) { lo = [x0 + i * d, ylo, z0];              hi = [x0 + (i + 1) * d, yhi, z0 + CELL]; }
-      else                { lo = [x0 + CELL - (i + 1) * d, ylo, z0]; hi = [x0 + CELL - i * d, yhi, z0 + CELL]; }
-      out.push(new Box(lo, hi, 'piece'));
+    // solid wedge. A cut quadrant does not vanish: it pops up into a flat
+    // landing at half the cell height, which is what keeps every ramp edit
+    // walkable. Must match tile_boxes() in server.py exactly.
+    const steps = 8, rt = CFG.RAMP_T, mid = y0 + CELL / 2;
+    for (let r = 0; r < 2; r++) for (let c = 0; c < 2; c++) {
+      const present = (mask >> (r * 2 + c)) & 1;
+      const sLo = r === 0 ? 0.5 : 0, sHi = r === 0 ? 1 : 0.5;
+      const uLo = c === 0 ? 0 : 0.5, uHi = c === 0 ? 0.5 : 1;
+      if (!present) {
+        const q = rampSpan(dir, x0, z0, sLo, sHi, uLo, uHi);
+        out.push(new Box([q[0], Math.max(y0, mid - rt), q[2]], [q[1], mid, q[3]], 'piece'));
+        continue;
+      }
+      for (let i = sLo * steps; i < sHi * steps; i++) {
+        const h = (i + 1) * (CELL / steps);
+        const q = rampSpan(dir, x0, z0, i / steps, (i + 1) / steps, uLo, uHi);
+        out.push(new Box([q[0], Math.max(y0, y0 + h - rt), q[2]],
+                         [q[1], y0 + h, q[3]], 'piece'));
+      }
     }
     return out;
   }
   if (type === 'roof') {
-    const levels = 4, rh = CFG.ROOF_H;   // must match tile_boxes() in server.py
-    for (let i = 0; i < levels; i++) {
-      const inset = i * (CELL / (2 * levels));
-      out.push(new Box([x0 + inset, y0 + i * (rh / levels), z0 + inset],
-                       [x0 + CELL - inset, y0 + (i + 1) * (rh / levels), z0 + CELL - inset],
-                       'piece'));
+    const levels = 4, rh = CFG.ROOF_H, hf = CELL / 2;   // matches server.py
+    for (let r = 0; r < 2; r++) for (let c = 0; c < 2; c++) {
+      if (!((mask >> (r * 2 + c)) & 1)) continue;
+      const qx0 = x0 + c * hf, qx1 = x0 + (c + 1) * hf;
+      const qz0 = z0 + r * hf, qz1 = z0 + (r + 1) * hf;
+      for (let i = 0; i < levels; i++) {
+        const inset = i * (CELL / (2 * levels));
+        const xa = Math.max(qx0, x0 + inset), xb = Math.min(qx1, x0 + CELL - inset);
+        const za = Math.max(qz0, z0 + inset), zb = Math.min(qz1, z0 + CELL - inset);
+        if (xb - xa < 1e-6 || zb - za < 1e-6) continue;
+        out.push(new Box([xa, y0 + i * (rh / levels), za],
+                         [xb, y0 + (i + 1) * (rh / levels), zb], 'piece'));
+      }
     }
     return out;
   }
@@ -1303,7 +1409,7 @@ function pieceCenter(type, cx, cy, cz) {
 function makePieceMesh(type, cx, cy, cz, dir, mask, material) {
   const mat = material || mats.piece;
   const c = pieceCenter(type, cx, cy, cz);
-  if (mask === FULL || (type !== 'wallX' && type !== 'wallZ' && type !== 'floor')) {
+  if (mask === fullMask(type)) {
     const m = new THREE.Mesh(GEO[type], mat);
     m.position.set(c[0], c[1], c[2]);
     if (type === 'ramp' || type === 'roof') m.rotation.y = DIR_ROT[dir] || 0;
@@ -1344,6 +1450,65 @@ function applyPieceStage(rec) {
   rec.mesh.traverse((o) => { if (o.isMesh) o.material = m; });
 }
 
+/* A piece that lands on you moves YOU, not the piece -- and in a direction
+   chosen on purpose. Mirrors resolve_player_out() in server.py.
+
+   Leaving it to the AABB solver was the phasing bug: it resolves along
+   whichever axis is shallowest, and for a ramp -- eight thin treads, so every
+   penetration is shallow -- that is regularly straight down, dropping you
+   through the floor and out of the map. So the rule is explicit:
+
+     floor / ramp / cone  ->  you end up standing ON it, never under it
+     wall                 ->  pushed along the wall's own normal, to whichever
+                              side you were already heading. Never sideways.
+
+   The server does the same and sends a `correct`; this runs locally so the
+   push happens on the frame you see the piece appear rather than a round trip
+   later. */
+function pushOutOfPiece(rec) {
+  if (state.dead) return;
+  const ab = playerAABB(me.pos, me.crouch);
+  const hit = rec.boxes.filter((b) => b.overlaps(ab[0], ab[1]));
+  if (!hit.length) return;
+  const boxes = getColliders();
+  let cands;
+  if (rec.type === 'floor' || rec.type === 'ramp' || rec.type === 'roof') {
+    // Lift repeatedly, not once. A ramp is eight treads and a cone is four
+    // rings, and a player box is wider than one of them -- clearing the tread
+    // you are standing in drops you straight into the next one up. Settle on
+    // the first height that is clear of everything.
+    const cand = me.pos.slice();
+    for (let k = 0; k < 8; k++) {
+      const ab2 = playerAABB(cand, me.crouch);
+      const b = overlapAny(ab2[0], ab2[1], boxes);
+      if (!b) { me.pos = cand; if (me.vel[1] < 0) me.vel[1] = 0; return; }
+      cand[1] = b.hi[1] + 0.02;
+    }
+    return;
+  } else {
+    const axis = rec.type === 'wallX' ? 0 : 2;
+    const half = CFG.P_W / 2 + 0.02;
+    let lo = Infinity, hi = -Infinity;
+    for (const b of hit) { if (b.lo[axis] < lo) lo = b.lo[axis]; if (b.hi[axis] > hi) hi = b.hi[axis]; }
+    const fwdPos = me.pos.slice(); fwdPos[axis] = hi + half;
+    const backPos = me.pos.slice(); backPos[axis] = lo - half;
+    let head = me.vel[axis];
+    if (Math.abs(head) < 0.5) {
+      const yr = me.yaw * DEG;
+      head = axis === 0 ? -Math.sin(yr) : -Math.cos(yr);
+    }
+    cands = head >= 0 ? [fwdPos, backPos] : [backPos, fwdPos];
+  }
+  for (const c of cands) {
+    const a2 = playerAABB(c, me.crouch);
+    if (!overlapAny(a2[0], a2[1], boxes)) {
+      me.pos = c;
+      if (me.vel[1] < 0) me.vel[1] = 0;
+      return;
+    }
+  }
+}
+
 function addPiece(p) {
   removePiece(p.key, true);
   const mesh = makePieceMesh(p.type, p.cx, p.cy, p.cz, p.dir, p.mask);
@@ -1359,6 +1524,7 @@ function addPiece(p) {
   gridAdd(rec);
   applyPieceStage(rec);        // a piece in `welcome` may already be battered
   collidersDirty = true;
+  if (state.running && CFG) pushOutOfPiece(rec);
   return rec;
 }
 function disposeMesh(m) {
@@ -1391,6 +1557,9 @@ function reskinPiece(key, mask) {
   rec.stage = -1;              // fresh mesh, so re-apply the damage skin
   applyPieceStage(rec);
   collidersDirty = true;
+  // a ramp edit RAISES geometry rather than removing it, so an edit can trap
+  // someone exactly the way a fresh placement can
+  if (state.running && CFG) pushOutOfPiece(rec);
 }
 function wipePieces() {
   for (const key of Array.from(pieces.keys())) removePiece(key, true);
@@ -1443,6 +1612,27 @@ function moveAxis(pos, crouch, delta, axis, boxes) {
   }
   return hit;
 }
+/* Last line of defence against ending up inside the world.
+
+   moveAxis() resolves along the axis it was asked to move on, which is right
+   while you are moving but useless when you START a frame already embedded --
+   a piece appearing around you, a shove, a rounding error on a seam. Left to
+   itself it picks the shallowest way out, and that is often downwards, which
+   is how you fall through the map.
+
+   So: if the player box is inside something at the top of a frame, lift them
+   out of the top of it. Up is always the safe direction -- worst case you stand
+   on the thing -- and it is never a surprise the way being flung sideways is. */
+function unstick(pos, crouch, boxes) {
+  for (let k = 0; k < 6; k++) {
+    const ab = playerAABB(pos, crouch);
+    const b = overlapAny(ab[0], ab[1], boxes);
+    if (!b) return k > 0;
+    pos[1] = b.hi[1] + 1e-3;
+  }
+  return true;
+}
+
 function stepMove(pos, vel, crouch, grounded, dt, boxes) {
   vel[1] -= CFG.GRAVITY * dt;
   // terminal velocity keeps per-substep travel under the 0.25 slab thickness,
@@ -1514,6 +1704,8 @@ function updateLocal(dt) {
     me.vel[0] *= damp; me.vel[2] *= damp;
   }
   if (keys[K.jump] && me.grounded) { me.vel[1] = CFG.JUMP; me.grounded = false; }
+
+  if (unstick(me.pos, me.crouch, boxes) && me.vel[1] < 0) me.vel[1] = 0;
 
   const sub = CFG.SUBSTEP;
   let left = dt, landed = false;
@@ -1662,7 +1854,7 @@ function isSupported(boxes, cx, cy, cz) {
           const rec = a[i];
           // full footprint, not the edited mask -- matches piece_bounds() on the server
           const nb = rec.sbounds || (rec.sbounds =
-            boundsOf(tileBoxes(rec.type, rec.cx, rec.cy, rec.cz, rec.dir, FULL)));
+            boundsOf(tileBoxes(rec.type, rec.cx, rec.cy, rec.cz, rec.dir, fullMask(rec.type))));
           if (facesTouch(bounds, nb)) return true;
         }
       }
@@ -1675,17 +1867,25 @@ function inBounds(cx, cy, cz) {
          Math.abs(cx) <= CFG.CELL_XZ_MAX && Math.abs(cz) <= CFG.CELL_XZ_MAX;
 }
 
-/* Grid-snapped placement, Fortnite-style.
+/* Grid-snapped placement.
 
    Placement is NOT free-aim: the piece always lands on a whole cell measured
    out from the cell you are standing in, along the cardinal direction you face.
-   Aim distance only chooses how many cells ahead (1 or 2) and pitch chooses the
-   storey. That is what makes building feel like it locks to a grid instead of
-   floating wherever the crosshair happens to hit.
+   Aim distance only chooses how many cells ahead and pitch chooses the storey.
+   That is what makes building feel like it locks to a grid instead of floating
+   wherever the crosshair happens to hit.
+
+   REACH IS MEASURED IN CELLS, not metres -- see cellInReach(). Think of the map
+   as invisible build boxes, each holding four walls, two floors and one ramp or
+   cone. You reach the box you are standing in and two more in every direction,
+   trimmed to a circle. Measuring in cells is what makes reach predictable: it
+   does not wobble depending on where inside a box you happen to be standing,
+   and it steps forward by exactly one box when you walk into the next one.
 
    `send` is the wire form (pt:'wall' + facing); `draw` is the canonical form so
    the ghost sits exactly where the server will put the piece. */
 const CARD = [[0, 0, -1], [1, 0, 0], [0, 0, 1], [-1, 0, 0]];
+const SNAP_TRIES = 8;      // how many fallback cells the snap sweep will test
 
 function facingDir() {
   // From yaw, not the camera ray: looking straight up or down must not make
@@ -1695,15 +1895,81 @@ function facingDir() {
   return Math.abs(fx) > Math.abs(fz) ? (fx > 0 ? 1 : 3) : (fz > 0 ? 2 : 0);
 }
 
+/* Mirrors cell_in_reach() in server.py.
+
+   Floors and cones: the box you stand in and two more, trimmed to a circle.
+   Ramps: a stride, not a throw -- your own box or the next one.
+   Walls: a wall does not live IN a box, it lives on the edge BETWEEN two, so
+   an edge counts as in reach when EITHER of its boxes is. That is what lets
+   you wall the far side of the furthest floor you can place, which is where a
+   wall is actually useful, without letting you place one a whole box beyond. */
+function cellInReach(piece, cx, cy, cz, dq) {
+  if (Math.abs(cy - cellOf(me.pos[1] + 0.05)) > CFG.BUILD_RADIUS_Y) return false;
+  const dx = cx - cellOf(me.pos[0]), dz = cz - cellOf(me.pos[2]);
+  const r = CFG.BUILD_RADIUS;
+  const inCircle = (ax, az) => ax * ax + az * az <= r * r;
+  if (piece === 'ramp') {
+    const st = CARD[dq];
+    return (dx === 0 && dz === 0) || (dx === st[0] && dz === st[2]);
+  }
+  if (piece === 'wall') {
+    const st = CARD[(dq + 2) % 4];        // the facing canonWall() will use
+    return inCircle(dx, dz) || inCircle(dx + st[0], dz + st[2]);
+  }
+  return inCircle(dx, dz);
+}
+
+/* Nothing solid may stand between you and the box you are filling. Without it,
+   "two boxes of reach" quietly meant "two boxes THROUGH a wall" -- you could
+   drop a floor on the far side of someone's build. Anything in the way now caps
+   you at the last box you can actually see into. Mirrors build_los_clear().
+
+   Aimed at the NEAREST point of the new piece, not its centre: aiming at the
+   centre means the ray has to pass through the piece you are STANDING on to get
+   there, so standing on a ramp refused the next ramp -- which is the single most
+   common thing anyone builds. */
+function losClear(boxes, near) {
+  const eye = eyePos(), b = boundsOf(boxes), seg = [0, 0, 0];
+  for (let i = 0; i < 3; i++) seg[i] = clamp(eye[i], b[0][i], b[1][i]) - eye[i];
+  const dist = Math.hypot(seg[0], seg[1], seg[2]);
+  if (dist < 1.2) return true;
+  const d = [seg[0] / dist, seg[1] / dist, seg[2] / dist];
+  return raycast(eye, d, near, dist - 0.15).t === null;
+}
+
+/* Colliders within build range, filtered once a frame.
+
+   Every candidate cell costs a line-of-sight raycast, and raycast() is a linear
+   scan -- against a thousand boxes in a well-built fight that is a millisecond
+   of the frame per candidate. No build ray ever leaves this radius, so throwing
+   the rest away first is free accuracy-wise and turns the whole ghost update
+   back into something you would not notice. */
+function nearbyColliders(radius) {
+  const all = getColliders(), p = me.pos, out = [];
+  for (let i = 0; i < all.length; i++) {
+    const b = all[i];
+    if (b.hi[0] < p[0] - radius || b.lo[0] > p[0] + radius) continue;
+    if (b.hi[2] < p[2] - radius || b.lo[2] > p[2] + radius) continue;
+    if (b.hi[1] < p[1] - radius || b.lo[1] > p[1] + radius) continue;
+    out.push(b);
+  }
+  return out;
+}
+
 function planBuild(piece) {
   const eye = eyePos(), d = camForward();
   const dq = facingDir();
   const off = CARD[dq];
   const baseY = cellOf(me.pos[1] + 0.05);
 
-  const hit = raycast(eye, d, getColliders(), CFG.BUILD_REACH);
-  const reach = hit.t === null ? CFG.BUILD_REACH : hit.t;
-  let steps = clamp(Math.round(reach / CELL), 1, 2);
+  // A wall gets one step further than a floor because its edge sits on the far
+  // side of the last box in reach, not in the middle of it.
+  const maxSteps = CFG.BUILD_RADIUS + (piece === 'wall' ? 1 : 0);
+  const probe = maxSteps * CELL;
+  const near = nearbyColliders(probe + CELL);
+  const hit = raycast(eye, d, near, probe);
+  const reach = hit.t === null ? probe : hit.t;
+  let steps = clamp(Math.round(reach / CELL), 1, maxSteps);
 
   // where in the world you are actually pointing -- snapping ranks against
   // this, so the piece lands at the legal spot nearest your crosshair
@@ -1712,19 +1978,19 @@ function planBuild(piece) {
   let dy = 0;
   if (me.pitch > 38) dy = 1;
   else if (me.pitch < -38) dy = -1;
-  if (piece === 'floor') {
+  if (piece === 'floor' || piece === 'roof') {
     dy = me.pitch > 38 ? 1 : 0;
-    if (me.pitch < -45) steps = 0;          // drop a floor under your own feet
+    if (me.pitch < -45) steps = 0;          // drop one under your own feet
   }
+  if (piece === 'ramp') steps = Math.min(steps, 1);
 
-  const REACH_MAX = CFG.BUILD_REACH + CELL - 0.5;
-
-  /* A candidate cell, cheaply: bounds, canonical form, occupancy and reach --
-     no collision boxes built. The snap sweep looks at hundreds of cells a
-     frame, so the expensive support test is deferred to `holds()` and only run
-     on a cell that is already the closest one found so far. */
+  /* A candidate cell, cheaply: reach, canonical form and occupancy -- no
+     collision boxes built. The snap sweep looks at dozens of cells a frame, so
+     the expensive support and line-of-sight tests are deferred to `holds()` and
+     only run on a cell that is already the closest one found so far. */
   const candAt = (cx, cy, cz) => {
     if (!inBounds(cx, cy, cz)) return null;
+    if (!cellInReach(piece, cx, cy, cz, dq)) return null;
     let type = piece, dcx = cx, dcy = cy, dcz = cz;
     const dir = piece === 'wall' ? (dq + 2) % 4 : (piece === 'floor' ? 0 : dq);
     if (piece === 'wall') {
@@ -1733,17 +1999,15 @@ function planBuild(piece) {
       if (!inBounds(dcx, dcy, dcz)) return null;
     }
     if (occupied(type, dcx, dcy, dcz)) return null;
-    // the server measures reach to the piece's real centre; stay inside it, or
-    // the ghost promises a placement the server then throws away
-    const mid = pieceCenter(type, dcx, dcy, dcz);
-    if (dist3(mid, me.pos) > REACH_MAX) return null;
-    return { mid: mid, dir: dir,
+    return { mid: pieceCenter(type, dcx, dcy, dcz), dir: dir,
              send: { pt: piece, cx: cx, cy: cy, cz: cz, dir: dir },
              draw: { type: type, cx: dcx, cy: dcy, cz: dcz, dir: dir } };
   };
-  const holds = (c) => isSupported(
-    tileBoxes(c.draw.type, c.draw.cx, c.draw.cy, c.draw.cz, c.dir, FULL),
-    c.draw.cx, c.draw.cy, c.draw.cz);
+  const holds = (c) => {
+    const boxes = tileBoxes(c.draw.type, c.draw.cx, c.draw.cy, c.draw.cz,
+                            c.dir, fullMask(c.draw.type));
+    return isSupported(boxes, c.draw.cx, c.draw.cy, c.draw.cz) && losClear(boxes, near);
+  };
 
   // 1. Where you asked for it: straight ahead, at the storey your aim picks.
   //    Progressively closer fallbacks so point-blank panic-walling still lands
@@ -1762,21 +2026,26 @@ function planBuild(piece) {
   //    cannot float -- it just goes to the closest spot that works, rather than
   //    telling you no.
   const bx = cellOf(me.pos[0]), bz = cellOf(me.pos[2]);
-  const R = 3;
-  let best = null, bestD = Infinity;
+  const R = maxSteps, RY = CFG.BUILD_RADIUS_Y;
+  const cands = [];
   for (let ox = -R; ox <= R; ox++) {
-    for (let oy = -R; oy <= R; oy++) {
+    for (let oy = -RY; oy <= RY; oy++) {
       for (let oz = -R; oz <= R; oz++) {
         const c = candAt(bx + ox, baseY + oy, bz + oz);
-        if (!c) continue;
-        const dd = dist3(c.mid, aimAt);
-        if (dd >= bestD) continue;          // cheap first, support last
-        if (!holds(c)) continue;
-        best = c; bestD = dd;
+        if (c) cands.push([dist3(c.mid, aimAt), c]);
       }
     }
   }
-  return best;
+  /* Rank by distance to the crosshair FIRST, then test in that order and stop
+     at the first one that works. `holds()` costs a line-of-sight raycast, so it
+     must not run once per candidate: sorted, the answer is almost always the
+     first or second one tried, and SNAP_TRIES stops a hopeless frame (nowhere
+     legal at all) from raycasting through the whole neighbourhood. A candidate
+     ranked ninth is a bad snap anyway -- it is nowhere near your crosshair. */
+  cands.sort((a, b) => a[0] - b[0]);
+  const tried = Math.min(cands.length, SNAP_TRIES);
+  for (let i = 0; i < tried; i++) if (holds(cands[i][1])) return cands[i][1];
+  return null;
 }
 function updateGhost() {
   const showing = state.running && !state.paused && !state.dead &&
@@ -1797,7 +2066,7 @@ function updateGhost() {
   if (ghost && ghost.userData.sig === sig) return;
   if (ghost) { scene.remove(ghost); disposeMesh(ghost); ghost = null; }
   if (!dr) return;
-  ghost = makePieceMesh(dr.type, dr.cx, dr.cy, dr.cz, dr.dir, FULL,
+  ghost = makePieceMesh(dr.type, dr.cx, dr.cy, dr.cz, dr.dir, fullMask(dr.type),
                         ghostValid ? mats.ghost : mats.ghostBad);
   ghost.userData.sig = sig;
   ghost.traverse((o) => { o.castShadow = false; o.receiveShadow = false; });
@@ -1818,7 +2087,8 @@ function tryBuild() {
 /* =========================================================================
    10. Edit mode
    ========================================================================= */
-const edit = { key: null, mask: FULL, sel: 0, dragging: false, group: null, tiles: [] };
+const edit = { key: null, mask: 0, sel: 0, dragging: false, group: null,
+               tiles: [], rows: 3, cols: 3 };
 function aimRay() {
   // In third person the crosshair follows the CAMERA ray, so edit picking has
   // to use it too or the tile you highlight is not the tile you are pointing at.
@@ -1828,7 +2098,7 @@ function aimRay() {
 function isEditable(rec) {
   if (!rec) return false;
   if (rec.owner !== state.myId) return false;         // own pieces only
-  return rec.type === 'wallX' || rec.type === 'wallZ' || rec.type === 'floor';
+  return !!MASK_GRID[rec.type];
 }
 function editableAt() {
   const rec = pieceUnderAim(CFG.EDIT_REACH + 5);
@@ -1837,35 +2107,52 @@ function editableAt() {
 function startEdit() {
   const rec = editableAt();
   if (!rec) return;
+  const g = maskGrid(rec.type);
   edit.key = rec.key; edit.mask = rec.mask; edit.sel = 0; edit.dragging = false;
+  edit.rows = g[0]; edit.cols = g[1];
   state.editing = rec;
   buildEditOverlay(rec);
 }
+
+/* Where a tile's marker quad goes, in world space. One function so the overlay
+   and nothing else decides this -- picking is done against the real collision
+   boxes, so the two cannot drift. Returns [pos, size, rotation]. */
+function editTilePlacement(rec, r, c) {
+  const x0 = rec.cx * CELL, y0 = rec.cy * CELL, z0 = rec.cz * CELL;
+  if (rec.type === 'wallX' || rec.type === 'wallZ') {
+    const th = CELL / 3, y = y0 + (2 - r + 0.5) * th;
+    if (rec.type === 'wallX') {
+      return [[x0, y, z0 + (c + 0.5) * th], th * 0.9, [0, Math.PI / 2, 0]];
+    }
+    return [[x0 + (c + 0.5) * th, y, z0], th * 0.9, [0, 0, 0]];
+  }
+  const hf = CELL / 2, flat = [-Math.PI / 2, 0, 0];
+  if (rec.type === 'floor') {
+    return [[x0 + (c + 0.5) * hf, y0 + 0.03, z0 + (r + 0.5) * hf], hf * 0.9, flat];
+  }
+  if (rec.type === 'roof') {
+    // a cone's quadrants are sloped; float the marker at mid-cone height
+    return [[x0 + (c + 0.5) * hf, y0 + CFG.ROOF_H * 0.55, z0 + (r + 0.5) * hf],
+            hf * 0.82, flat];
+  }
+  // ramp: sit the marker on the slope, at the height it has mid-quadrant
+  const sc = r === 0 ? 0.75 : 0.25, uc = c === 0 ? 0.25 : 0.75;
+  const q = rampSpan(rec.dir, x0, z0, sc - 0.001, sc + 0.001, uc - 0.001, uc + 0.001);
+  return [[(q[0] + q[1]) / 2, y0 + sc * CELL + 0.06, (q[2] + q[3]) / 2], hf * 0.82, flat];
+}
+
 function buildEditOverlay(rec) {
   clearEditOverlay();
   const g = new THREE.Group();
+  g.renderOrder = 999;
   edit.tiles = [];
-  const th = CELL / 3;
-  const x0 = rec.cx * CELL, y0 = rec.cy * CELL, z0 = rec.cz * CELL;
-  for (let r = 0; r < 3; r++) for (let c = 0; c < 3; c++) {
-    let geo, px, py, pz, rot = null;
-    if (rec.type === 'floor') {
-      geo = new THREE.PlaneGeometry(th * 0.92, th * 0.92);
-      px = x0 + (c + 0.5) * th; py = y0 + 0.02; pz = z0 + (r + 0.5) * th;
-      rot = [-Math.PI / 2, 0, 0];
-    } else if (rec.type === 'wallX') {
-      geo = new THREE.PlaneGeometry(th * 0.92, th * 0.92);
-      px = x0 + 0.02; py = y0 + (2 - r + 0.5) * th; pz = z0 + (c + 0.5) * th;
-      rot = [0, Math.PI / 2, 0];
-    } else {
-      geo = new THREE.PlaneGeometry(th * 0.92, th * 0.92);
-      px = x0 + (c + 0.5) * th; py = y0 + (2 - r + 0.5) * th; pz = z0 + 0.02;
-      rot = [0, 0, 0];
-    }
-    const m = new THREE.Mesh(geo, mats.tile);
-    m.position.set(px, py, pz);
-    if (rot) m.rotation.set(rot[0], rot[1], rot[2]);
-    m.userData.idx = r * 3 + c;
+  for (let r = 0; r < edit.rows; r++) for (let c = 0; c < edit.cols; c++) {
+    const pl = editTilePlacement(rec, r, c);
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(pl[1], pl[1]), mats.tile);
+    m.position.set(pl[0][0], pl[0][1], pl[0][2]);
+    m.rotation.set(pl[2][0], pl[2][1], pl[2][2]);
+    m.renderOrder = 999;
+    m.userData.idx = r * edit.cols + c;
     g.add(m);
     edit.tiles.push(m);
   }
@@ -1880,38 +2167,45 @@ function clearEditOverlay() {
   }
   edit.tiles = [];
 }
+
+/* Which tile the crosshair is on.
+
+   Picked by raycasting the piece's OWN collision boxes at full mask and mapping
+   the hit point back into tile coordinates, rather than by intersecting an
+   idealised plane. A cone is a stepped pyramid and a ramp is a staircase --
+   neither has a plane to intersect -- and doing it this way means picking can
+   never disagree with the geometry, because it asks the geometry. */
 function editTileUnderAim() {
   const rec = state.editing;
   if (!rec) return -1;
-  // NB: `r` is the tile row further down -- this must not shadow it.
-  const ray = aimRay(), eye = ray.o, d = ray.d;
-  const REACH = CFG.EDIT_REACH + 5;
-  const th = CELL / 3;
+  const ray = aimRay();
+  const boxes = tileBoxes(rec.type, rec.cx, rec.cy, rec.cz, rec.dir, fullMask(rec.type));
+  const hit = raycast(ray.o, ray.d, boxes, CFG.EDIT_REACH + 5);
+  if (hit.t === null) return -1;
+  const t = hit.t + 1e-3;
+  const px = ray.o[0] + ray.d[0] * t;
+  const py = ray.o[1] + ray.d[1] * t;
+  const pz = ray.o[2] + ray.d[2] * t;
   const x0 = rec.cx * CELL, y0 = rec.cy * CELL, z0 = rec.cz * CELL;
-  let t, u, v;
-  if (rec.type === 'floor') {
-    if (Math.abs(d[1]) < 1e-6) return -1;
-    t = (y0 - eye[1]) / d[1];
-    if (t < 0 || t > REACH) return -1;
-    u = eye[0] + d[0] * t - x0; v = eye[2] + d[2] * t - z0;
-    const c = Math.floor(u / th), r = Math.floor(v / th);
-    if (c < 0 || c > 2 || r < 0 || r > 2) return -1;
-    return r * 3 + c;
+  const q = (v, n) => clamp(Math.floor(v * n), 0, n - 1);
+  let r, c;
+  if (rec.type === 'wallX' || rec.type === 'wallZ') {
+    c = q(((rec.type === 'wallX' ? pz - z0 : px - x0) / CELL), 3);
+    r = 2 - q((py - y0) / CELL, 3);
+  } else if (rec.type === 'floor' || rec.type === 'roof') {
+    c = q((px - x0) / CELL, 2);
+    r = q((pz - z0) / CELL, 2);
+  } else {                                   // ramp: along- and across-slope
+    const u = (px - x0) / CELL, w = (pz - z0) / CELL;
+    let sv, uv;
+    if (rec.dir === 0)      { sv = 1 - w; uv = u; }
+    else if (rec.dir === 2) { sv = w;     uv = u; }
+    else if (rec.dir === 1) { sv = u;     uv = w; }
+    else                    { sv = 1 - u; uv = w; }
+    r = sv >= 0.5 ? 0 : 1;
+    c = uv < 0.5 ? 0 : 1;
   }
-  if (rec.type === 'wallX') {
-    if (Math.abs(d[0]) < 1e-6) return -1;
-    t = (x0 - eye[0]) / d[0];
-    if (t < 0 || t > REACH) return -1;
-    u = eye[2] + d[2] * t - z0; v = eye[1] + d[1] * t - y0;
-  } else {
-    if (Math.abs(d[2]) < 1e-6) return -1;
-    t = (z0 - eye[2]) / d[2];
-    if (t < 0 || t > REACH) return -1;
-    u = eye[0] + d[0] * t - x0; v = eye[1] + d[1] * t - y0;
-  }
-  const c = Math.floor(u / th), r = 2 - Math.floor(v / th);
-  if (c < 0 || c > 2 || r < 0 || r > 2) return -1;
-  return r * 3 + c;
+  return r * edit.cols + c;
 }
 /* One aim raycast, reused by the build-HP readout and the edit prompt. */
 function pieceUnderAim(reach) {
@@ -1943,54 +2237,64 @@ function updateAimInfo() {
   }
 
   // edit prompt
+  const say = (parts) => {
+    hint.classList.remove('hidden');
+    hint.innerHTML = '';
+    for (const t of parts) {
+      if (typeof t === 'string') hint.appendChild(document.createTextNode(t));
+      else { const b = document.createElement('b'); b.textContent = t[0]; hint.appendChild(b); }
+    }
+  };
   if (state.editing) {
-    hint.classList.remove('hidden');
-    hint.innerHTML = '';
-    hint.appendChild(document.createTextNode('Drag across tiles to cut them  \u00b7  '));
-    const a = document.createElement('b'); a.textContent = 'LMB';
-    hint.appendChild(a); hint.appendChild(document.createTextNode(' apply  \u00b7  '));
-    const b2 = document.createElement('b'); b2.textContent = 'RMB';
-    hint.appendChild(b2); hint.appendChild(document.createTextNode(' cancel  \u00b7  '));
-    const c2 = document.createElement('b'); c2.textContent = keyName(settings.keys.edit);
-    hint.appendChild(c2); hint.appendChild(document.createTextNode(' reset'));
+    const nm = edit.mask & ~edit.sel;
+    const ok = editMaskOk(state.editing.type, nm);
+    say([edit.sel ? (ok ? editName(state.editing.type, nm) : 'not a real edit')
+                  : 'Drag across tiles', '  \u00b7  ',
+         ['LMB'], ' apply  \u00b7  ', ['RMB'], ' cancel  \u00b7  ',
+         [keyName(settings.keys.edit)], ' reset']);
   } else if (isEditable(aimPiece)) {
-    hint.classList.remove('hidden');
-    hint.innerHTML = '';
-    const k = document.createElement('b'); k.textContent = keyName(settings.keys.edit);
-    hint.appendChild(k);
-    hint.appendChild(document.createTextNode('  edit this piece'));
+    say([[keyName(settings.keys.edit)], '  edit this ' + PIECE_WORD[aimPiece.type]]);
   } else {
     hint.classList.add('hidden');
   }
 }
+const PIECE_WORD = { wallX: 'wall', wallZ: 'wall', floor: 'floor', ramp: 'ramp', roof: 'cone' };
 
 function updateEdit() {
   if (!state.editing) return;
   if (!pieces.has(edit.key)) { cancelEdit(); return; }
   const idx = editTileUnderAim();
   if (edit.dragging && idx >= 0) edit.sel |= (1 << idx);
+  const ok = editMaskOk(state.editing.type, edit.mask & ~edit.sel);
   for (const m of edit.tiles) {
     const i = m.userData.idx;
     const present = (edit.mask >> i) & 1;
     m.visible = !!present;
-    m.material = ((edit.sel >> i) & 1) ? mats.tileSel : mats.tile;
+    m.material = ((edit.sel >> i) & 1) ? (ok ? mats.tileSel : mats.tileNo) : mats.tile;
     m.scale.setScalar(i === idx ? 1.0 : 0.86);
   }
 }
 function applyEdit() {
   if (!state.editing) return;
   const nm = edit.mask & ~edit.sel;
-  // Cutting every tile is not a way to delete a piece -- the server refuses it,
-  // so do not pretend otherwise here.
-  if (nm !== edit.mask && nm !== 0) {
-    Net.send({ t: 'edit', key: edit.key, mask: nm });
-    Audio_.build();
+  /* Only real edits go through. Cutting every tile is not a way to delete a
+     piece, and a scattered pick is not a shape the game has -- the server
+     refuses both, so do not pretend otherwise here. An illegal selection drops
+     back to an empty one and leaves you in edit mode to try again, rather than
+     throwing you out for a miss-drag. */
+  if (nm === edit.mask) { cancelEdit(); return; }
+  if (!editMaskOk(state.editing.type, nm)) {
+    edit.sel = 0; edit.dragging = false;
+    Audio_.blip(200, 0.05, 'square', 0.06);
+    return;
   }
+  Net.send({ t: 'edit', key: edit.key, mask: nm });
+  Audio_.build();
   cancelEdit();
 }
 function resetEdit() {
   if (!state.editing) return;
-  Net.send({ t: 'edit', key: edit.key, mask: FULL });
+  Net.send({ t: 'edit', key: edit.key, mask: fullMask(state.editing.type) });
   Audio_.build();
   cancelEdit();
 }
@@ -2097,6 +2401,10 @@ function updateFx(dt) {
   }
 }
 
+/* How far ahead of the CAMERA to look for the point the crosshair is on. Long
+   enough that the direction from the muzzle to it is the direction you are
+   aiming, for every weapon including melee. */
+const AIM_PROBE = 400;
 let lastShot = {};
 function canFire(w) {
   const spec = CFG.WEAPONS[w];
@@ -2118,10 +2426,17 @@ function fire() {
 
   /* Two-step raycast: camera -> world, then muzzle -> that point. Without it
      the third-person camera offset makes shots miss where the crosshair
-     points, which is the classic way a TPS feels broken. */
+     points, which is the classic way a TPS feels broken.
+
+     The probe length is AIM_PROBE, deliberately NOT the weapon's range. Using
+     the range is what broke the pickaxe: its range is 3.0 and the camera sits
+     3.2 behind your head, so the "aim point" landed BEHIND you and every swing
+     was sent backwards into empty air. How far a weapon reaches is a separate
+     question from where the crosshair is pointing, and the server enforces the
+     range anyway. */
   const camPos = [camera.position.x, camera.position.y, camera.position.z];
-  const camHit = raycast(camPos, d, worldBoxes(), spec.range);
-  const aimT = camHit.t === null ? spec.range : camHit.t;
+  const camHit = raycast(camPos, d, worldBoxes(), AIM_PROBE);
+  const aimT = camHit.t === null ? AIM_PROBE : camHit.t;
   const aimPoint = [camPos[0] + d[0] * aimT, camPos[1] + d[1] * aimT, camPos[2] + d[2] * aimT];
   let sd = [aimPoint[0] - eye[0], aimPoint[1] - eye[1], aimPoint[2] - eye[2]];
   const sl = Math.hypot(sd[0], sd[1], sd[2]) || 1;
@@ -2891,7 +3206,6 @@ function handleMsg(m) {
       CFG = m.config; ARENA = m.arena; SPAWNS = m.spawns; DUMMIES = m.dummies;
       state.myId = m.id; state.hostId = m.host;
       state.mode = m.mode; state.phase = m.phase;
-      FULL = 0b111111111;
       initScene();
       for (const p of m.players) ensurePlayer(p);
       for (const p of m.pieces) addPiece(p);
@@ -3336,15 +3650,63 @@ function onRelease(e) {
 /* Pointer Events are what a trackpad, pen or touch surface actually emits;
    plain mouse events are only a compatibility layer on top and some inputs
    deliver them inconsistently. Prefer pointer events where they exist and fall
-   back to mouse events otherwise -- never both, or one click would fire twice. */
-if (window.PointerEvent) {
-  addEventListener('pointerdown', onPress);
-  addEventListener('pointerup', onRelease);
-  addEventListener('pointercancel', onRelease);
-} else {
-  addEventListener('mousedown', onPress);
-  addEventListener('mouseup', onRelease);
+   back to mouse events otherwise -- never both, or one click would fire twice.
+
+   CHORDED BUTTONS. This is the whole reason you could not shoot while aiming.
+   Pointer Events deliberately do NOT fire pointerdown for a second button
+   pressed while a first is already held -- the spec fires pointerdown only on
+   the transition from no-buttons to some-button, and pointerup only when the
+   LAST button comes up. Press a button while another is down and what you get
+   is a pointermove carrying `button` set to the one that changed.
+
+   So: right-click to aim, then left-click to fire, and the left click arrived
+   as a pointermove nobody was listening to. Hip-firing worked, aiming down
+   sights was a mute button. Same in reverse -- hold fire, then right-click, and
+   you never aimed.
+
+   Listening to pointermove as well as pointerdown/up fixes both. */
+const BUTTON_BIT = [1, 4, 2];       // e.button 0/1/2 -> the e.buttons bit
+let btnState = 0;
+
+/* Drive every button transition off the `buttons` BITMASK rather than off
+   `event.button`. The bitmask is the one thing every engine reports the same
+   way; `button` on a move event is -1 in the spec but has not always been, and
+   a browser that reports 0 there would fire the gun on every mouse movement.
+   Diffing the mask also means a transition we never saw at all -- a click that
+   landed while the window was in the background, say -- is caught on the next
+   event instead of leaving the mouse stuck down. */
+function applyButtons(bits) {
+  bits |= 0;
+  const changed = bits ^ btnState;
+  btnState = bits;
+  if (changed) {
+    for (let b = 0; b < 3; b++) {
+      const bit = BUTTON_BIT[b];
+      if (!(changed & bit)) continue;
+      const ev = { button: b, buttons: bits };
+      if (bits & bit) onPress(ev); else onRelease(ev);
+    }
+  }
+  // and a belt-and-braces reconcile, in case a handler bailed out early
+  if (!(bits & 1) && firing) { firing = false; dragLook = false; }
+  if (!(bits & 2) && state.ads) state.ads = false;
 }
+if (window.PointerEvent) {
+  for (const t of ['pointerdown', 'pointerup', 'pointermove']) {
+    addEventListener(t, (e) => applyButtons(e.buttons));
+  }
+  addEventListener('pointercancel', () => {
+    // the browser took the pointer away mid-gesture: let go of everything, but
+    // do NOT commit a half-swept edit selection as if you had released on it
+    if (state.editing) { edit.dragging = false; edit.sel = 0; }
+    applyButtons(0);
+  });
+} else {
+  addEventListener('mousedown', (e) => applyButtons(e.buttons));
+  addEventListener('mouseup', (e) => applyButtons(e.buttons));
+  addEventListener('mousemove', (e) => applyButtons(e.buttons));
+}
+
 $('c').addEventListener('pointerdown', (e) => { e.preventDefault(); });
 addEventListener('contextmenu', (e) => e.preventDefault());
 addEventListener('wheel', (e) => {
@@ -3426,7 +3788,7 @@ addEventListener('keydown', (e) => {
   if (act === 'edit') {
     if (state.editing) {
       const rec = pieces.get(edit.key);
-      if (rec && rec.mask !== FULL) resetEdit(); else cancelEdit();
+      if (rec && rec.mask !== fullMask(rec.type)) resetEdit(); else cancelEdit();
     } else startEdit();
     return;
   }
@@ -3447,7 +3809,13 @@ addEventListener('keyup', (e) => {
   keys[k] = false;
   if (keyAction[k] === 'scores') $('board').classList.add('hidden');
 });
-addEventListener('blur', () => { for (const k in keys) keys[k] = false; firing = false; });
+/* Losing the window with a key or a mouse button held must not leave it held
+   forever -- and clearing `firing` alone is not enough, because the button
+   bitmask has to be reset too or the next press looks like no change at all. */
+addEventListener('blur', () => {
+  for (const k in keys) keys[k] = false;
+  applyButtons(0);
+});
 
 /* =========================================================================
    18. Main loop

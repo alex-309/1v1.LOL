@@ -37,7 +37,7 @@ WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 # same stamp and shouts if the two disagree -- editing index.html and forgetting
 # to restart server.py leaves the old rules in charge, and the symptom (pieces
 # floating that the ghost said were illegal) looks exactly like a code bug.
-BUILD_ID = "BUILD 2026-09-01 20:40"
+BUILD_ID = "BUILD 2026-09-03 grid-reach + fortnite edits"
 TICK_HZ = 30.0
 TICK_DT = 1.0 / TICK_HZ
 
@@ -59,9 +59,22 @@ CONFIG = {
     "MAT_REGEN": 12.0,       # per second
     "MAT_REGEN_DELAY": 3.0,  # seconds after your last placement
     "PICKAXE_REFUND": 5,
-    "BUILD_REACH": 12.0,
+    # Build reach is measured in CELLS, not metres. You reach the cell you are
+    # standing in plus two more in every direction, trimmed to a circle -- so
+    # (2,0) and (1,1) are in range but (2,1) and (2,2) are not. See
+    # cell_in_reach(): the same rule runs on both sides of the wire.
+    "BUILD_RADIUS": 2,       # cells, horizontally, from the cell you stand in
+    "BUILD_RADIUS_Y": 1,     # storeys up/down
+    "BUILD_REACH": 8.0,      # == BUILD_RADIUS * CELL, in metres. Only the client
+                             # still uses it, to decide how far away a piece can be
+                             # and still show its health / be editable.
     "EDIT_REACH": 8.0,
-    "TURBO_RATE": 9.0,       # pieces per second while holding LMB
+    # Building used to run at 9 pieces a second, which is faster than anyone
+    # can aim: a held mouse button emptied 90 materials a second into cells you
+    # never meant to fill. The cooldown is enforced on BOTH sides -- the client
+    # throttles for feel, the server for truth.
+    "TURBO_RATE": 3.2,       # pieces per second while holding LMB
+    "BUILD_COOLDOWN": 0.3125,   # == 1 / TURBO_RATE
     "CELL_Y_MIN": 0,
     "CELL_Y_MAX": 30,
     "CELL_XZ_MAX": 40,
@@ -109,7 +122,7 @@ CONFIG = {
 
     "WEAPONS": {
         "pickaxe": {
-            "slot": 1, "name": "Pickaxe", "dmg": 25.0, "build_dmg": 100.0,
+            "slot": 1, "name": "Pickaxe", "dmg": 20.0, "build_dmg": 20.0,
             "range": 3.0, "rate": 0.7, "mag": 0, "reload": 0.0,
             "pellets": 1, "spread": 0.0, "move_spread": 0.0, "recoil": 0.0,
             "head_mult": 1.0, "ads": False, "melee": True,
@@ -337,7 +350,69 @@ def raycast(origin, d, boxes, tmax, skip_ref=None):
 # ---------------------------------------------------------------------------
 CELL = CONFIG["CELL"]
 WALL_T = CONFIG["WALL_T"]
+
+# Cardinal steps, indexed by facing: 0=-Z 1=+X 2=+Z 3=-X.
+CARD = ((0, -1), (1, 0), (0, 1), (-1, 0))
+
+# ---------------------------------------------------------------------------
+# Edit masks
+#
+# A piece carries a bitmask of the tiles it still has. The grid is NOT the same
+# shape for every piece, because the edits are not:
+#
+#   wallX / wallZ  3x3, bit r*3+c, r=0 is the TOP row.   -> windows and doors
+#   floor / roof   2x2, bit r*2+c, r spans +Z, c spans +X. A cleared quadrant
+#                  is a hole you can drop through.
+#   ramp           2x2, bit r*2+c, r=0 is the HIGH half of the slope, c is
+#                  across it. A cleared quadrant does NOT vanish -- it POPS UP
+#                  to a flat platform at the height the ramp reached there,
+#                  which is what a ramp edit does in the game this borrows from.
+#
+# FULL_MASK stays 3x3 for the wire default; full_mask() is what code should ask.
+# ---------------------------------------------------------------------------
 FULL_MASK = 0b111111111
+MASK_GRID = {"wallX": (3, 3), "wallZ": (3, 3),
+             "floor": (2, 2), "roof": (2, 2), "ramp": (2, 2)}
+
+
+def mask_grid(ptype):
+    return MASK_GRID.get(ptype, (3, 3))
+
+
+def full_mask(ptype):
+    rows, cols = mask_grid(ptype)
+    return (1 << (rows * cols)) - 1
+
+
+def mask_is_rect(bits, rows, cols):
+    """True when the set bits form one solid axis-aligned rectangle.
+
+    This is the whole "no random edits" rule. Every edit the original game
+    actually has -- window, door, doorway, half wall, side opening, floor
+    quadrant, half floor, half ramp -- is a rectangle of tiles. Scattered
+    diagonal picks are not, and are refused rather than silently accepted."""
+    idx = [i for i in range(rows * cols) if (bits >> i) & 1]
+    if not idx:
+        return False
+    rs = [i // cols for i in idx]
+    cs = [i % cols for i in idx]
+    r0, r1, c0, c1 = min(rs), max(rs), min(cs), max(cs)
+    return len(idx) == (r1 - r0 + 1) * (c1 - c0 + 1)
+
+
+def edit_mask_ok(ptype, mask):
+    """Validate a requested mask for `ptype`. `mask` is what REMAINS."""
+    if ptype not in MASK_GRID:
+        return False
+    rows, cols = mask_grid(ptype)
+    full = full_mask(ptype)
+    if mask & ~full:
+        return False
+    if mask == full:
+        return True                       # reset to unedited
+    if mask == 0:
+        return False                      # editing is not a way to delete
+    return mask_is_rect(full & ~mask, rows, cols)
 
 
 def canon_wall(cx, cy, cz, direction):
@@ -361,13 +436,33 @@ def parse_key(key):
     return ptype, cx, cy, cz
 
 
+def _ramp_span(direction, x0, z0, s_lo, s_hi, u_lo, u_hi):
+    """Ramp-local (along-slope, across-slope) rectangle -> world x/z rectangle.
+
+    `s` runs 0 at the low end to 1 at the high end; `u` runs across the slope.
+    Everything about a ramp -- treads, quadrants, popped platforms -- is easier
+    to reason about in those two numbers than in four rotated cases."""
+    sl, sh = s_lo * CELL, s_hi * CELL
+    ul, uh = u_lo * CELL, u_hi * CELL
+    if direction == 0:          # rises toward -Z
+        return (x0 + ul, x0 + uh, z0 + CELL - sh, z0 + CELL - sl)
+    if direction == 2:          # rises toward +Z
+        return (x0 + ul, x0 + uh, z0 + sl, z0 + sh)
+    if direction == 1:          # rises toward +X
+        return (x0 + sl, x0 + sh, z0 + ul, z0 + uh)
+    return (x0 + CELL - sh, x0 + CELL - sl, z0 + ul, z0 + uh)   # toward -X
+
+
 def tile_boxes(ptype, cx, cy, cz, direction, mask):
-    """Collision boxes for a piece, honouring its 3x3 edit mask."""
+    """Collision boxes for a piece, honouring its edit mask.
+
+    Mirrored tile-for-tile by tileBoxes() in index.html. The two must agree or
+    the ghost promises placements the server then throws away."""
     x0, y0, z0 = cx * CELL, cy * CELL, cz * CELL
-    third = CELL / 3.0
     out = []
 
     if ptype in ("wallX", "wallZ"):
+        third = CELL / 3.0
         for r in range(3):          # r=0 is the top row
             for c in range(3):
                 if not (mask >> (r * 3 + c)) & 1:
@@ -385,12 +480,13 @@ def tile_boxes(ptype, cx, cy, cz, direction, mask):
         return out
 
     if ptype == "floor":
-        for r in range(3):          # r spans Z, c spans X
-            for c in range(3):
-                if not (mask >> (r * 3 + c)) & 1:
+        half = CELL / 2.0
+        for r in range(2):          # r spans Z, c spans X
+            for c in range(2):
+                if not (mask >> (r * 2 + c)) & 1:
                     continue
-                out.append(Box([x0 + c * third, y0 - WALL_T / 2, z0 + r * third],
-                               [x0 + (c + 1) * third, y0 + WALL_T / 2, z0 + (r + 1) * third],
+                out.append(Box([x0 + c * half, y0 - WALL_T / 2, z0 + r * half],
+                               [x0 + (c + 1) * half, y0 + WALL_T / 2, z0 + (r + 1) * half],
                                "piece"))
         return out
 
@@ -402,38 +498,62 @@ def tile_boxes(ptype, cx, cy, cz, direction, mask):
         # Each tread is only RAMP_T thick instead of reaching all the way down
         # to the cell floor, so a ramp is a slanted wall you can walk under --
         # not a solid wedge that fills the whole cell.
+        #
+        # An edited quadrant is not removed: it becomes a flat platform at HALF
+        # the cell height -- the landing the ramp surface is at when it crosses
+        # the middle of the cell. That one rule produces every ramp shape the
+        # game this borrows from has, and all of them stay walkable:
+        #
+        #   low half cut   -> flat landing, then the ramp climbs from mid to top
+        #   high half cut  -> the ramp climbs to mid, then levels off
+        #   one side cut   -> half-width ramp with a platform running beside it
+        #
+        # Popping to the quadrant's own top edge instead was the obvious first
+        # try and it is wrong: cutting the high half then lands the platform a
+        # clear 1.4 above the tread that feeds it, so you walk up the ramp and
+        # into a wall.
         steps = 8
-        d = CELL / steps
         rt = CONFIG["RAMP_T"]
-        for i in range(steps):
-            h = (i + 1) * (CELL / steps)
-            ylo = max(y0, y0 + h - rt)
-            yhi = y0 + h
-            if direction == 0:      # rises toward -Z
-                lo = [x0, ylo, z0 + CELL - (i + 1) * d]
-                hi = [x0 + CELL, yhi, z0 + CELL - i * d]
-            elif direction == 2:    # rises toward +Z
-                lo = [x0, ylo, z0 + i * d]
-                hi = [x0 + CELL, yhi, z0 + (i + 1) * d]
-            elif direction == 1:    # rises toward +X
-                lo = [x0 + i * d, ylo, z0]
-                hi = [x0 + (i + 1) * d, yhi, z0 + CELL]
-            else:                   # rises toward -X
-                lo = [x0 + CELL - (i + 1) * d, ylo, z0]
-                hi = [x0 + CELL - i * d, yhi, z0 + CELL]
-            out.append(Box(lo, hi, "piece"))
+        mid = y0 + CELL / 2.0
+        for r in range(2):
+            for c in range(2):
+                present = (mask >> (r * 2 + c)) & 1
+                s_lo, s_hi = (0.5, 1.0) if r == 0 else (0.0, 0.5)
+                u_lo, u_hi = (0.0, 0.5) if c == 0 else (0.5, 1.0)
+                if not present:
+                    xa, xb, za, zb = _ramp_span(direction, x0, z0,
+                                                s_lo, s_hi, u_lo, u_hi)
+                    out.append(Box([xa, max(y0, mid - rt), za],
+                                   [xb, mid, zb], "piece"))
+                    continue
+                lo_i = int(s_lo * steps)
+                for i in range(lo_i, int(s_hi * steps)):
+                    h = (i + 1) * (CELL / steps)
+                    xa, xb, za, zb = _ramp_span(
+                        direction, x0, z0, i / float(steps), (i + 1) / float(steps),
+                        u_lo, u_hi)
+                    out.append(Box([xa, max(y0, y0 + h - rt), za],
+                                   [xb, y0 + h, zb], "piece"))
         return out
 
     if ptype == "roof":
         levels = 4
         rh = CONFIG["ROOF_H"]
-        for i in range(levels):
-            inset = i * (CELL / (2.0 * levels))
-            ylo = y0 + i * (rh / levels)
-            yhi = y0 + (i + 1) * (rh / levels)
-            out.append(Box([x0 + inset, ylo, z0 + inset],
-                           [x0 + CELL - inset, yhi, z0 + CELL - inset],
-                           "piece"))
+        half = CELL / 2.0
+        for r in range(2):          # r spans Z, c spans X -- same as a floor
+            for c in range(2):
+                if not (mask >> (r * 2 + c)) & 1:
+                    continue
+                qx0, qx1 = x0 + c * half, x0 + (c + 1) * half
+                qz0, qz1 = z0 + r * half, z0 + (r + 1) * half
+                for i in range(levels):
+                    inset = i * (CELL / (2.0 * levels))
+                    xa, xb = max(qx0, x0 + inset), min(qx1, x0 + CELL - inset)
+                    za, zb = max(qz0, z0 + inset), min(qz1, z0 + CELL - inset)
+                    if xb - xa < 1e-6 or zb - za < 1e-6:
+                        continue
+                    out.append(Box([xa, y0 + i * (rh / levels), za],
+                                   [xb, y0 + (i + 1) * (rh / levels), zb], "piece"))
         return out
 
     return out
@@ -529,6 +649,24 @@ def move_axis(pos, crouch, delta, axis, boxes):
             half = w / 2
             pos[axis] = (b.lo[axis] - half - 1e-4) if delta > 0 else (b.hi[axis] + half + 1e-4)
     return hit
+
+
+def unstick(pos, crouch, boxes):
+    """Last line of defence against ending up inside the world.
+
+    move_axis() resolves along the axis it was asked to move on, which is right
+    while you are moving but useless when you START already embedded -- a piece
+    appearing around you, a shove, a rounding error on a seam. Left to itself it
+    picks the shallowest way out, and that is often downwards, which is how you
+    fall through the map. Up is always the safe direction: worst case you end up
+    standing on the thing. Mirrored by unstick() in index.html."""
+    for k in range(6):
+        lo, hi = player_aabb(pos, crouch)
+        b = _overlap_any(lo, hi, boxes)
+        if b is None:
+            return k > 0
+        pos[1] = b.hi[1] + 1e-3
+    return True
 
 
 def step_move(pos, vel, crouch, grounded, dt, boxes):
@@ -960,8 +1098,120 @@ class Game(object):
         return (CONFIG["CELL_Y_MIN"] <= cy <= CONFIG["CELL_Y_MAX"] and
                 abs(cx) <= CONFIG["CELL_XZ_MAX"] and abs(cz) <= CONFIG["CELL_XZ_MAX"])
 
+    def cell_in_reach(self, p, ptype, cx, cy, cz, direction):
+        """Grid reach, not metres.
+
+        Think of the map as invisible build boxes. You reach the box you are
+        standing in and two more in every direction, trimmed to a circle -- so
+        (2,0) and (1,1) are in, (2,1) and (2,2) are out. Measuring in cells
+        rather than in metres is what makes reach predictable: it does not
+        wobble depending on where inside the box you happen to be standing, and
+        it steps forward by exactly one box when you walk into the next one.
+
+        Ramps are a stride, not a throw: one in front, or the box you stand in.
+
+        A wall does not live IN a box, it lives on the edge BETWEEN two, so an
+        edge counts as in reach when either of its boxes is. That is what lets
+        you wall the far side of the furthest floor you can place."""
+        bx = int(math.floor(p["pos"][0] / CELL))
+        by = int(math.floor((p["pos"][1] + 0.05) / CELL))
+        bz = int(math.floor(p["pos"][2] / CELL))
+        dx, dy, dz = cx - bx, cy - by, cz - bz
+        if abs(dy) > CONFIG["BUILD_RADIUS_Y"]:
+            return False
+        r = CONFIG["BUILD_RADIUS"]
+        step = CARD[direction & 3]
+        if ptype == "ramp":
+            return (dx, dz) == (0, 0) or (dx, dz) == step
+        if dx * dx + dz * dz <= r * r:
+            return True
+        if ptype == "wall":
+            ax, az = dx + step[0], dz + step[1]
+            return ax * ax + az * az <= r * r
+        return False
+
+    def build_los_clear(self, p, boxes):
+        """Nothing solid may stand between you and the box you are filling.
+
+        Without this, "two cells of reach" quietly meant "two cells THROUGH a
+        wall": you could drop a floor on the far side of an enemy's build and
+        walk out of your own box. Anything in the way now caps you at the last
+        box you can actually see into.
+
+        Aimed at the NEAREST point of the new piece, not its centre. Aiming at
+        the centre means the ray has to pass through the piece you are standing
+        on to get there, so standing on a ramp refused the next ramp -- which is
+        the single most common thing anyone builds."""
+        eye_h = CONFIG["EYE_CROUCH"] if p["crouch"] else CONFIG["EYE"]
+        eye = [p["pos"][0], p["pos"][1] + eye_h, p["pos"][2]]
+        plo = [min(b.lo[i] for b in boxes) for i in range(3)]
+        phi = [max(b.hi[i] for b in boxes) for i in range(3)]
+        near = [min(max(eye[i], plo[i]), phi[i]) for i in range(3)]
+        seg = v_sub(near, eye)
+        dist = v_len(seg)
+        if dist < 1.2:
+            return True
+        d = v_scale(seg, 1.0 / dist)
+        t, _ = raycast(eye, d, self.collision_boxes(), dist - 0.15)
+        return t is None
+
+    def resolve_player_out(self, other, ptype, hit, world):
+        """Where a player standing inside a new piece should end up.
+
+        Returns a position, or False when there is nowhere safe -- in which
+        case the caller refuses the placement rather than wedging someone into
+        the map. Refusing outright was the old behaviour for every case, and it
+        is why building on top of yourself did nothing; letting the AABB solver
+        sort it out afterwards was worse, because it resolves along whichever
+        axis is shallowest and that is regularly straight down through the
+        floor. Hence an explicit, per-piece rule:
+
+          floor / ramp / cone -> stand ON it, never under it
+          wall                -> pushed along the wall's own normal, to the
+                                 side you were already heading. Never sideways:
+                                 a wall shoving you left or right is how you end
+                                 up somewhere you did not choose."""
+        pos = other["pos"]
+        if ptype in ("floor", "ramp", "roof"):
+            # Lift repeatedly, not once. A ramp is eight treads and a cone is
+            # four rings, and a player box is wider than one of them -- clearing
+            # the tread you are standing in drops you straight into the next one
+            # up. Settle on the first height that is clear of everything.
+            cand = list(pos)
+            for _ in range(8):
+                lo, hi = player_aabb(cand, other["crouch"])
+                b = _overlap_any(lo, hi, world)
+                if b is None:
+                    return cand
+                cand[1] = b.hi[1] + 0.02
+            return False
+        else:
+            axis = 0 if ptype == "wallX" else 2
+            half = CONFIG["P_W"] / 2.0 + 0.02
+            lo_e = min(b.lo[axis] for b in hit)
+            hi_e = max(b.hi[axis] for b in hit)
+            fwd_pos = list(pos)
+            fwd_pos[axis] = hi_e + half
+            back_pos = list(pos)
+            back_pos[axis] = lo_e - half
+            head = other["vel"][axis]
+            if abs(head) < 0.5:
+                yaw = math.radians(other["yaw"])
+                head = -math.sin(yaw) if axis == 0 else -math.cos(yaw)
+            cands = [fwd_pos, back_pos] if head >= 0 else [back_pos, fwd_pos]
+        for c in cands:
+            lo, hi = player_aabb(c, other["crouch"])
+            if _overlap_any(lo, hi, world) is None:
+                return c
+        return False
+
     def place(self, p, ptype, cx, cy, cz, direction):
-        """Validate + place. Returns the piece dict, or None with a reason."""
+        """Validate + place. Returns the piece dict, or None if refused."""
+        now = time.time()
+        if now - p.get("last_build", 0.0) < CONFIG["BUILD_COOLDOWN"] * 0.9:
+            return None
+        if not self.cell_in_reach(p, ptype, cx, cy, cz, direction):
+            return None
         if ptype == "wall":
             ptype, cx, cy, cz = canon_wall(cx, cy, cz, direction)
         if not self.in_bounds(cx, cy, cz):
@@ -977,33 +1227,32 @@ class Game(object):
         if not infinite and p["mats"] < cost:
             return None
 
-        boxes = tile_boxes(ptype, cx, cy, cz, direction, FULL_MASK)
-        # Never trap a living player inside a piece -- but ignore the bottom of
-        # the body box, so dropping a floor at your own feet still works the way
-        # it does in the games this borrows from.
-        for other in self.players.values():
-            if not other["alive"]:
-                continue
-            lo, hi = player_aabb(other["pos"], other["crouch"])
-            lo = [lo[0], lo[1] + 0.35, lo[2]]
-            for b in boxes:
-                if b.overlaps(lo, hi):
-                    return None
+        boxes = tile_boxes(ptype, cx, cy, cz, direction, full_mask(ptype))
 
         # No floating builds: it must rest on the arena or touch something that
         # already does.
         if not self.is_supported(boxes, cx, cy, cz):
             return None
 
-        # Reach check, measured to the piece's ACTUAL centre rather than to the
-        # centre of its key cell. For a wall those differ by a full cell -- the
-        # canonical cell sits behind the plane -- which made wall range depend
-        # on which way you were facing.
-        plo = [min(b.lo[i] for b in boxes) for i in range(3)]
-        phi = [max(b.hi[i] for b in boxes) for i in range(3)]
-        cc = [(plo[i] + phi[i]) / 2.0 for i in range(3)]
-        if v_dist(cc, p["pos"]) > CONFIG["BUILD_REACH"] + CELL:
+        if not self.build_los_clear(p, boxes):
             return None
+
+        # A piece landing on a player moves the PLAYER. Work out every push
+        # first and only commit if all of them are safe -- half-applied pushes
+        # are how someone ends up inside the map.
+        world = self.collision_boxes() + boxes
+        pushes = []
+        for other in self.players.values():
+            if not other["alive"]:
+                continue
+            lo, hi = player_aabb(other["pos"], other["crouch"])
+            hit = [b for b in boxes if b.overlaps(lo, hi)]
+            if not hit:
+                continue
+            dest = self.resolve_player_out(other, ptype, hit, world)
+            if dest is False:
+                return None
+            pushes.append((other, dest))
 
         if len(self.pieces) >= CONFIG["PIECE_LIMIT"] and self.piece_order:
             old = self.piece_order.pop(0)
@@ -1013,16 +1262,21 @@ class Game(object):
 
         pc = {"key": key, "type": ptype, "cx": cx, "cy": cy, "cz": cz,
               "dir": direction, "hp": CONFIG["PIECE_HP"], "owner": p["id"],
-              "mask": FULL_MASK, "boxes": boxes, "t": time.time(),
+              "mask": full_mask(ptype), "boxes": boxes, "t": now,
               "sbounds": ([min(b.lo[i] for b in boxes) for i in range(3)],
                           [max(b.hi[i] for b in boxes) for i in range(3)])}
         self.pieces[key] = pc
         self.piece_order.append(key)
         if not infinite:
             p["mats"] -= cost
-        p["last_build"] = time.time()
+        p["last_build"] = now
         self.broadcast({"t": "build", "p": self.wire_piece(pc)})
         self.send_to(p["id"], {"t": "you", "mats": p["mats"]})
+        for other, dest in pushes:
+            other["pos"] = list(dest)
+            other["vel"][1] = 0.0
+            other["grounded"] = False
+            self.send_to(other["id"], {"t": "correct", "pos": other["pos"]})
         return pc
 
     def wire_piece(self, pc):
@@ -1053,18 +1307,36 @@ class Game(object):
         pc = self.pieces.get(key)
         if pc is None or pc["owner"] != p["id"]:
             return
-        if pc["type"] not in ("wallX", "wallZ", "floor"):
+        # edit_mask_ok() carries the whole rule: the right grid for the piece,
+        # a rectangle of tiles and never all of them. Editing every tile away
+        # would leave an invisible piece that still occupies its cell and still
+        # holds up whatever is stacked on it -- a wall you cannot see, cannot
+        # shoot and cannot rebuild over. A piece is destroyed by damage, never
+        # by editing.
+        if not edit_mask_ok(pc["type"], mask):
             return
-        mask &= FULL_MASK
-        if mask == 0:
-            # Editing every tile away would leave an invisible piece that still
-            # occupies its cell and still holds up whatever is stacked on it --
-            # a wall you cannot see, cannot shoot and cannot rebuild over. A
-            # piece is destroyed by damage, never by editing.
+        if mask == pc["mask"]:
             return
         pc["mask"] = mask
-        pc["boxes"] = tile_boxes(pc["type"], pc["cx"], pc["cy"], pc["cz"], pc["dir"], mask)
+        boxes = tile_boxes(pc["type"], pc["cx"], pc["cy"], pc["cz"], pc["dir"], mask)
+        pc["boxes"] = boxes
         self.broadcast({"t": "editbuild", "key": key, "mask": mask})
+        # A ramp edit raises geometry rather than removing it, so an edit can
+        # put a player inside the piece exactly the way a fresh placement can.
+        world = self.collision_boxes()
+        for other in self.players.values():
+            if not other["alive"]:
+                continue
+            lo, hi = player_aabb(other["pos"], other["crouch"])
+            hit = [b for b in boxes if b.overlaps(lo, hi)]
+            if not hit:
+                continue
+            dest = self.resolve_player_out(other, pc["type"], hit, world)
+            if dest is False:
+                continue
+            other["pos"] = list(dest)
+            other["vel"][1] = 0.0
+            self.send_to(other["id"], {"t": "correct", "pos": other["pos"]})
 
     # -- combat -----------------------------------------------------------
     def apply_damage(self, target, amount, by_pid, head=False):
@@ -1335,13 +1607,18 @@ class Game(object):
                        exclude=p["id"])
 
     def melee(self, p, direction):
+        if not p["alive"] or self.phase != "live":
+            return
         w = CONFIG["WEAPONS"]["pickaxe"]
         now = time.time()
         if now - p["last_shot"].get("pickaxe", 0.0) < w["rate"] * 0.85:
             return
         p["last_shot"]["pickaxe"] = now
-        eye = [p["pos"][0], p["pos"][1] + CONFIG["EYE"], p["pos"][2]]
+        eye_h = CONFIG["EYE_CROUCH"] if p["crouch"] else CONFIG["EYE"]
+        eye = [p["pos"][0], p["pos"][1] + eye_h, p["pos"][2]]
         boxes = self.collision_boxes(exclude_pid=p["id"], include_players=True)
+        if self.mode == "aim":
+            boxes.extend(self.target_boxes())
         if self.dummies:
             boxes.extend(self.dummy_boxes())
         for key, pc in self.pieces.items():
@@ -1365,6 +1642,8 @@ class Game(object):
             self.damage_piece(box.ref, w["build_dmg"], p["id"])
             self.send_to(p["id"], {"t": "hit", "kind": "piece",
                                    "dmg": round(w["build_dmg"]), "pos": end})
+        elif box.kind == "target":
+            self.hit_target(box.ref, p)
 
     def throw_grenade(self, p, origin, direction):
         w = CONFIG["WEAPONS"]["grenade"]
@@ -1565,6 +1844,9 @@ class Game(object):
             damp = max(0.0, 1.0 - CONFIG["FRICTION"] * dt)
             p["vel"][0] *= damp
             p["vel"][2] *= damp
+
+        if unstick(p["pos"], p["crouch"], boxes) and p["vel"][1] < 0:
+            p["vel"][1] = 0.0
 
         sub = CONFIG["SUBSTEP"]
         left = dt

@@ -59,7 +59,7 @@ page; only restarting the server updates the game.
 | `Shift` | Crouch |
 | `1` – `5` | Pickaxe · Rifle · Shotgun · Sniper · Grenade |
 | `Z` `X` `C` `V` | Wall · Ramp · Floor · Cone |
-| `F` | Edit a piece you built (hold on an edited piece to reset it) |
+| `F` | Edit a piece you built — wall, floor, ramp or cone (press again on an edited piece to reset it) |
 | `R` | Reload · `G` throw grenade |
 | Left mouse | Fire, or place a build piece (hold to turbo-build) |
 | Right mouse | Aim down sights |
@@ -76,7 +76,27 @@ always shows the bindings that are actually live.
 **Building.** Pick a piece, look where you want it, click. The blue ghost shows
 exactly where it lands; red means it won't go there. Every piece costs 10
 materials out of a 999 cap, and materials regenerate after three seconds without
-building.
+building. Holding the button builds about three pieces a second — slow enough
+that a held mouse doesn't quietly spend a hundred materials on boxes you never
+looked at.
+
+**The build grid.** The map is divided into invisible boxes one cell on a side.
+Each box holds four walls (one per face), a floor at its base, and one ramp *or*
+one cone in its volume — nothing else fits, and nothing lands off the grid.
+
+**Reach is measured in boxes, not metres.** You reach the box you are standing
+in and two more in every direction, trimmed to a circle: two straight ahead, two
+to either side, one diagonally — but not the far diagonals. Stand still and you
+can floor the box under your feet, the one in front, and the one past that.
+Walls are the exception in one direction only: a wall lives on the *edge*
+between two boxes, so you can put one on the far side of the furthest floor you
+can reach. Ramps are the exception the other way: your own box, or the one
+directly in front, and no further. Walk one box forward and the whole radius
+moves with you.
+
+**You cannot build through things.** If a wall, a cone or a chunk of the map
+stands between you and a box, that box is closed — you get the last one you can
+actually see into. Break the wall and the range opens back up.
 
 **Nothing floats — and you are never told "no".** A piece has to rest on the
 ground, on the map, or against another piece that (however many pieces down the
@@ -85,17 +105,45 @@ not refuse: it **snaps to the nearest spot in your build radius that can**, so
 building never stalls mid-fight. Break the piece holding a structure up and
 everything it was carrying falls with it.
 
+**A piece built on a player moves the player, not the piece.** A floor, ramp or
+cone under you puts you on top of it — never underneath, and never through the
+map. A wall placed on you shoves you along the wall's own facing, to whichever
+side you were already heading; it never throws you sideways.
+
+**The pickaxe** does 20 to anything it reaches — players, bots, dummies and
+builds alike — at a swing every 0.7s. It is the free option when you are out of
+ammo and the way to take a wall down without spending bullets; breaking a piece
+you swung at refunds 5 materials.
+
 **Build health.** Every piece has 150 HP and visibly deteriorates as it takes
 damage — it splits, darkens and chips through five stages on its way to
 breaking, the first of which shows after a single rifle round. Aim at any piece and its exact health appears under the crosshair.
 Builds don't throw damage numbers; a number on screen always means you hurt
 something that can shoot back.
 
-**Editing.** Look at a wall or floor *you* placed, press `F`, then hold left
-mouse and sweep across the 3×3 grid to pick tiles — releasing cuts them out.
-Right-click cancels, and `F` on an already-edited piece resets it. You cannot
-edit a piece away entirely; that's what the pickaxe is for. Ramps and cones are
-not editable.
+**Editing.** Look at any piece *you* placed, press `F`, then hold left mouse and
+sweep across the grid to pick tiles — releasing applies the edit. Right-click
+cancels, and `F` on an already-edited piece resets it. The grid depends on the
+piece:
+
+| Piece | Grid | What a picked tile does |
+|---|---|---|
+| Wall | 3×3 | Cuts the tile out — window, door, doorway, half wall, side opening |
+| Floor | 2×2 | Cuts that quadrant out, so you can drop through it |
+| Cone | 2×2 | Cuts that quarter of the cone away |
+| Ramp | 2×2 | *Raises* that quarter into a flat landing at half height |
+
+Ramp edits are the interesting ones. Cut the low half and the ramp starts
+halfway up with a landing in front of it; cut the high half and it climbs to the
+middle and levels off; cut one side and you get a half-width ramp with a
+platform running alongside.
+
+**Only real edits go through.** Your picked tiles have to form a solid
+rectangle, which is what every edit in this genre actually is — a scattered
+diagonal pick is refused and drops back to an empty selection rather than
+cutting a shape the game doesn't have. The prompt under the crosshair names what
+you are about to make. You also cannot edit a piece away entirely; that's what
+the pickaxe is for.
 
 ---
 
@@ -171,7 +219,7 @@ textures, WebAudio-synthesized effects, blocky characters — so nothing is copi
 from the original game, and there's no branding.
 
 Deliberately not included: accounts, ranked play, matchmaking, cosmetics, a map
-rotation, editable ramps and cones, and touch controls (desktop only). The
+rotation, and touch controls (desktop only). The
 server validates fire rate, ammo, range, line of sight and
 movement plausibility, which is the right level for playing with a friend — it
 is not hardened anti-cheat.
