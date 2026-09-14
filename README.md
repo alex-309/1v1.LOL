@@ -56,9 +56,10 @@ page; only restarting the server updates the game.
 The LAN server above is still the better way to actually play. Deploy when you
 want to send someone a link instead of asking them onto your Wi-Fi.
 
+The repo is connected to Vercel through GitHub, so a push to `main` deploys:
+
 ```
-npm i -g vercel
-vercel deploy
+git push
 ```
 
 Three files drive this, and none of them touch the game:
@@ -67,7 +68,7 @@ Three files drive this, and none of them touch the game:
 | --- | --- |
 | `app.py` | Vercel's entrypoint. Swaps the transport; imports every rule from `server.py`. |
 | `pyproject.toml` | Declares FastAPI, and names `app:app` as the entrypoint. |
-| `vercel.json` | Sets the function's max duration. |
+| `vercel.json` | Framework preset, Fluid compute, and the function's max duration. |
 
 `server.py` is unchanged and still runs standalone. It stays the single source
 of truth for the arena, physics, build rules, bots and `CONFIG`; `app.py`
@@ -81,8 +82,22 @@ FastAPI to serve the game socket. To run the deployed app exactly as deployed:
 uvicorn app:app --port 8080
 ```
 
-**Requires Fluid compute**, which is on by default for projects created after
-April 2025. WebSockets do not work without it.
+### The two settings that fail quietly
+
+`vercel.json` pins both of these in the repo, so neither needs a dashboard
+visit and neither can drift:
+
+- **`"framework": "fastapi"`** overrides the preset in Project Settings. A
+  project imported as **Other** builds this repo as a static site and never
+  builds the Python function. `index.html` still loads, so the symptom is the
+  game reaching "Connection failed" — it looks like a broken game rather than an
+  unbuilt backend.
+- **`"fluid": true`** enables Fluid compute, which WebSockets require. It is
+  default-on only for projects created after April 23, 2025, so an older project
+  has it off.
+
+Changing them here overrides the dashboard, so if you later flip a setting in
+Project Settings and nothing happens, this file is why.
 
 ### What you give up
 
