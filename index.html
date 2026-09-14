@@ -658,7 +658,7 @@ if (!window.THREE) {
 /* =========================================================================
    0. Small utilities
    ========================================================================= */
-const BUILD_ID = 'BUILD 2026-09-03 grid-reach + fortnite edits';
+const BUILD_ID = 'BUILD 2026-09-05 build-at-your-feet';
 const $ = (id) => document.getElementById(id);
 const clamp = (v, a, b) => v < a ? a : (v > b ? b : v);
 const lerp = (a, b, t) => a + (b - a) * t;
@@ -815,7 +815,7 @@ function editName(type, mask) {
   for (let i = 0; i < n; i++) if ((gone >> i) & 1) k++;
   return k === 1 ? 'single tile' : k + ' tiles';
 }
-let renderer, scene, camera, sun;
+let renderer, scene, camera, sun, contextLost = false;
 let arenaBoxes = [];
 const pieces = new Map();        // key -> piece record
 let colliders = [];              // arena + piece boxes, rebuilt when dirty
@@ -1183,6 +1183,28 @@ function buildArena() {
 function initScene() {
   CELL = CFG.CELL; WALL_T = CFG.WALL_T;
   renderer = new THREE.WebGLRenderer({ canvas: $('c'), antialias: true });
+
+  /* A blank screen that does NOT come back is a different failure from the
+     muzzle-flash whiteout that fxScale() handles: the browser has taken the
+     WebGL context away -- a GPU driver reset, waking from sleep, or too many
+     3D tabs open at once. Nothing in the page said so, which made it
+     indistinguishable from a game bug. preventDefault() is also what lets the
+     context be restored at all; without it, it is gone for good. */
+  const cv = $('c');
+  cv.addEventListener('webglcontextlost', (e) => {
+    e.preventDefault();
+    contextLost = true;
+    if (window.__fail) {
+      window.__fail('3D context lost', 'The browser took the graphics context ' +
+        'away -- usually a GPU driver reset, the machine waking from sleep, or ' +
+        'too many 3D tabs open. Waiting for it back; reload if it does not return.');
+    }
+  });
+  cv.addEventListener('webglcontextrestored', () => {
+    contextLost = false;
+    if (window.__fail) window.__fail('3D context restored', 'Rendering resumed.');
+  });
+
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
   renderer.setSize(innerWidth, innerHeight);
   renderer.shadowMap.enabled = true;
@@ -1886,6 +1908,11 @@ function inBounds(cx, cy, cz) {
    the ghost sits exactly where the server will put the piece. */
 const CARD = [[0, 0, -1], [1, 0, 0], [0, 0, 1], [-1, 0, 0]];
 const SNAP_TRIES = 8;      // how many fallback cells the snap sweep will test
+/* Look down past this and a floor, ramp or cone goes in the box you are
+   standing in. -40 degrees is aiming at the ground about two metres ahead --
+   already unmistakably "at my feet" -- while a running player scanning the
+   floor ahead sits around -10 to -20 and still builds forward. */
+const BUILD_HERE_PITCH = -40;
 
 function facingDir() {
   // From yaw, not the camera ray: looking straight up or down must not make
@@ -1934,7 +1961,12 @@ function losClear(boxes, near) {
   const dist = Math.hypot(seg[0], seg[1], seg[2]);
   if (dist < 1.2) return true;
   const d = [seg[0] / dist, seg[1] / dist, seg[2] / dist];
-  return raycast(eye, d, near, dist - 0.15).t === null;
+  const hit = raycast(eye, d, near, dist - 0.15);
+  /* A hit at t=0 means the ray STARTED inside something -- you are embedded in
+     a piece, not looking through one. Counting that as blocked would take
+     building away from a player who is stuck inside geometry, which is the
+     worst possible moment to lose it. Mirrors build_los_clear() in server.py. */
+  return hit.t === null || hit.t < 1e-4;
 }
 
 /* Colliders within build range, filtered once a frame.
@@ -1975,14 +2007,22 @@ function planBuild(piece) {
   // this, so the piece lands at the legal spot nearest your crosshair
   const aimAt = [eye[0] + d[0] * reach, eye[1] + d[1] * reach, eye[2] + d[2] * reach];
 
+  /* Pitch picks the storey -- except when you are looking at your own feet,
+     which means HERE, not "one in front of me".
+
+     Aim distance alone can never say "here": looking down puts the aim ray on
+     the ground a metre or two away, which rounds to one box ahead, and a ramp
+     was additionally floored at one box by its own reach rule. So there was no
+     aim at all that put a ramp under yourself -- and that is the first
+     piece of every ramp climb. Floors and cones already had this rule; ramps
+     just never got it. Walls are excluded: a wall cannot go where you are
+     standing, so for them looking down keeps meaning the storey below. */
   let dy = 0;
   if (me.pitch > 38) dy = 1;
   else if (me.pitch < -38) dy = -1;
-  if (piece === 'floor' || piece === 'roof') {
-    dy = me.pitch > 38 ? 1 : 0;
-    if (me.pitch < -45) steps = 0;          // drop one under your own feet
-  }
+  if (piece === 'floor' || piece === 'roof') dy = me.pitch > 38 ? 1 : 0;
   if (piece === 'ramp') steps = Math.min(steps, 1);
+  if (piece !== 'wall' && me.pitch < BUILD_HERE_PITCH) { steps = 0; dy = 0; }
 
   /* A candidate cell, cheaply: reach, canonical form and occupancy -- no
      collision boxes built. The snap sweep looks at dozens of cells a frame, so
@@ -2317,10 +2357,73 @@ function fxGeo() {
   return FXG;
 }
 const FX_UP = new THREE.Vector3(0, 1, 0);
+
+/* Muzzle effects are spawned at the SHOOTER'S EYE, which is not where your
+   camera is -- and that is why the screen goes white.
+
+   The third-person arm collapses to 0.15m the moment your back is against a
+   wall or your own build, which in a build fight is most of the time. The
+   muzzle flash is an unlit, near-white 0.26m sphere sitting 0.4m in front of
+   the eye: from a collapsed camera that subtends 57 degrees, three quarters of
+   the screen height, and it is held for 70ms while an AR refires every 125ms.
+   Hold the trigger against a wall and the frame is white more than half the
+   time. The same thing happens with someone else's flash when they shoot you
+   point-blank -- inside 0.4m theirs covers your whole screen.
+
+   Hiding the effect up close would look broken to everyone else, so instead
+   clamp its WORLD radius to whatever subtends at most FX_MAX_DEG from the
+   camera. At normal range nothing changes at all; up close it shrinks to a
+   spark rather than a whiteout. */
+const FX_MAX_DEG = 13;
+const FX_MAX_SIN = Math.sin(FX_MAX_DEG * 0.5 * Math.PI / 180);
+function fxScale(x, y, z, want) {
+  if (!camera) return want;
+  const d = Math.hypot(x - camera.position.x, y - camera.position.y,
+                       z - camera.position.z);
+  return Math.min(want, FX_MAX_SIN * d);
+}
+/* Effects are created by NETWORK MESSAGES but expired by updateFx(), and
+   updateFx only runs inside requestAnimationFrame. rAF stops dead when the tab
+   is hidden or the window is occluded. The socket does not.
+
+   So: sit in a background tab through a firefight and makeTracer/spawnImpact
+   keep pushing meshes into a scene that nothing is draining -- measured at
+   about 126 a second, so five minutes away is roughly 38,000 live meshes and
+   38,000 undisposed materials, every one of them submitted to the GPU on the
+   first frame you come back to. That is the lag; the GPU process being killed
+   for taking too long is the white screen; and because the WebSocket never
+   dropped, you are still standing there on everyone else's screen.
+
+   Two defences, since either alone is a single point of failure: don't build
+   effects nobody can see, and never let the lists outgrow what one frame can
+   actually draw. `lastFrameAt` rather than document.hidden alone, because rAF
+   also stalls for an occluded or fully-covered window, which does not set it. */
+let lastFrameAt = 0;
+const FX_MAX_TRACERS = 300, FX_MAX_BULLETS = 150, FX_MAX_PARTS = 500;
+function fxSuppressed() {
+  return !state.running || document.hidden ||
+         (performance.now() - lastFrameAt) > 500;
+}
+function fxTrim() {
+  while (fx.tracers.length > FX_MAX_TRACERS) {
+    const tr = fx.tracers.shift();
+    scene.remove(tr.m); tr.m.material.dispose();
+  }
+  while (fx.bullets.length > FX_MAX_BULLETS) {
+    const b = fx.bullets.shift();
+    scene.remove(b.m); b.m.material.dispose();
+  }
+  while (fx.parts.length > FX_MAX_PARTS) {
+    const pt = fx.parts.shift();
+    scene.remove(pt.m); pt.m.visible = false; fx.pool.push(pt.m);
+  }
+}
+
 /* A thin 1px line was almost invisible in flight. A shot now draws three
    things: a solid beam along the path, a bright round travelling down it so
    you can see the shot move, and a muzzle flash at the barrel. */
 function makeTracer(a, b, color) {
+  if (fxSuppressed()) return;
   const dx = b[0] - a[0], dy = b[1] - a[1], dz = b[2] - a[2];
   const len = Math.hypot(dx, dy, dz);
   if (len < 0.05) return;
@@ -2330,27 +2433,34 @@ function makeTracer(a, b, color) {
   const beam = new THREE.Mesh(G.beam, new THREE.MeshBasicMaterial({
     color: color || 0xffd98a, transparent: true, opacity: 0.9, depthWrite: false }));
   beam.position.set(a[0] + dx * 0.5, a[1] + dy * 0.5, a[2] + dz * 0.5);
-  beam.scale.set(0.05, len, 0.05);
+  // measured at the muzzle, the end that can be sitting on the camera
+  const br = fxScale(a[0], a[1], a[2], 0.05);
+  beam.scale.set(br, len, br);
   beam.quaternion.setFromUnitVectors(FX_UP, dir);
   scene.add(beam);
   fx.tracers.push({ m: beam, t: 0, life: 0.15, o: 0.9 });
 
   const bul = new THREE.Mesh(G.ball, new THREE.MeshBasicMaterial({
     color: 0xfff6d0, transparent: true, opacity: 1, depthWrite: false }));
-  bul.scale.setScalar(0.1);
+  bul.scale.setScalar(fxScale(a[0], a[1], a[2], 0.1));
   bul.position.set(a[0], a[1], a[2]);
   scene.add(bul);
-  fx.bullets.push({ m: bul, a: [a[0], a[1], a[2]], d: [dx, dy, dz], t: 0,
+  // r is re-clamped every frame in updateFx: the round leaves the muzzle fast,
+  // and it should be full size again the moment it is not in your face
+  fx.bullets.push({ m: bul, a: [a[0], a[1], a[2]], d: [dx, dy, dz], t: 0, r: 0.1,
                     dur: clamp(len / 220, 0.05, 0.22) });
 
   const flash = new THREE.Mesh(G.ball, new THREE.MeshBasicMaterial({
     color: 0xffe6a0, transparent: true, opacity: 0.95, depthWrite: false }));
   flash.position.set(a[0] + dir.x * 0.4, a[1] + dir.y * 0.4, a[2] + dir.z * 0.4);
-  flash.scale.setScalar(0.26);
+  flash.scale.setScalar(fxScale(flash.position.x, flash.position.y,
+                                flash.position.z, 0.26));
   scene.add(flash);
   fx.tracers.push({ m: flash, t: 0, life: 0.07, o: 0.95 });
+  fxTrim();
 }
 function spawnImpact(p, n) {
+  if (fxSuppressed()) return;
   for (let i = 0; i < (n || 6); i++) {
     let m = fx.pool.pop();
     if (!m) {
@@ -2365,6 +2475,7 @@ function spawnImpact(p, n) {
       v: [(Math.random() - 0.5) * 5, Math.random() * 4 + 1, (Math.random() - 0.5) * 5],
     });
   }
+  fxTrim();
 }
 function spawnDebris(c) { spawnImpact(c, 14); }
 function updateFx(dt) {
@@ -2382,6 +2493,7 @@ function updateFx(dt) {
     b.t += dt;
     const f = Math.min(1, b.t / b.dur);
     b.m.position.set(b.a[0] + b.d[0] * f, b.a[1] + b.d[1] * f, b.a[2] + b.d[2] * f);
+    b.m.scale.setScalar(fxScale(b.m.position.x, b.m.position.y, b.m.position.z, b.r));
     if (f >= 1) {
       scene.remove(b.m); b.m.material.dispose();
       fx.bullets.splice(i, 1);
@@ -2821,6 +2933,19 @@ function dropPlayer(id) {
   const rp = state.players.get(id);
   if (!rp) return;
   scene.remove(rp.grp);
+  /* Taking it out of the scene is not freeing it. Each player carries a
+     512x128 canvas texture for their nametag plus two health-bar sprites, and
+     cycling bots in and out of a lobby leaks a texture every time.
+
+     Sprites only, deliberately: the body is an Object3D.clone() of the team
+     template and SHARES its geometry and materials, so disposing those would
+     blank out everyone still playing. */
+  rp.grp.traverse((o) => {
+    if (o.isSprite && o.material) {
+      if (o.material.map) o.material.map.dispose();
+      o.material.dispose();
+    }
+  });
   state.players.delete(id);
 }
 
@@ -3835,6 +3960,7 @@ function frame(now) {
      floor. It only ever shows up after the first alt-tab. */
   if (dt > CFG.DT_CLAMP) dt = CFG.DT_CLAMP;
   if (dt <= 0) dt = 1 / 240;
+  lastFrameAt = now;          // fxSuppressed() watches this to know we are live
 
   fpsAcc += dt; fpsN++;
   if (fpsAcc > 0.5) { state.fps = fpsN / fpsAcc; fpsAcc = 0; fpsN = 0; drawStat(); }
@@ -3891,7 +4017,7 @@ function frame(now) {
     if (accPing > 1) { accPing = 0; Net.send({ t: 'ping', c: performance.now() }); }
   }
 
-  if (renderer && scene && camera) renderer.render(scene, camera);
+  if (renderer && scene && camera && !contextLost) renderer.render(scene, camera);
 }
 function round3(v) { return Math.round(v * 1000) / 1000; }
 

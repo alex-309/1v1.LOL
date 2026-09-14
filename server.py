@@ -37,7 +37,7 @@ WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 # same stamp and shouts if the two disagree -- editing index.html and forgetting
 # to restart server.py leaves the old rules in charge, and the symptom (pieces
 # floating that the ghost said were illegal) looks exactly like a code bug.
-BUILD_ID = "BUILD 2026-09-03 grid-reach + fortnite edits"
+BUILD_ID = "BUILD 2026-09-05 build-at-your-feet"
 TICK_HZ = 30.0
 TICK_DT = 1.0 / TICK_HZ
 
@@ -1153,7 +1153,11 @@ class Game(object):
             return True
         d = v_scale(seg, 1.0 / dist)
         t, _ = raycast(eye, d, self.collision_boxes(), dist - 0.15)
-        return t is None
+        # A hit at t=0 means the ray STARTED inside something -- the player is
+        # embedded in a piece, not looking through one. Counting that as blocked
+        # would take building away from someone stuck inside geometry, which is
+        # the worst possible moment to lose it.
+        return t is None or t < 1e-4
 
     def resolve_player_out(self, other, ptype, hit, world):
         """Where a player standing inside a new piece should end up.
