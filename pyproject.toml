@@ -1,0 +1,22 @@
+[project]
+name = "build-fighter"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.117.1",
+    # Pulls in `websockets`, which is the piece that actually serves the game
+    # socket. Also lets the deployed app be run verbatim on a laptop:
+    #   uvicorn app:app --port 8080
+    "uvicorn[standard]>=0.32",
+]
+
+# Vercel picks an entrypoint by filename, and this repo has two candidates it
+# recognises -- app.py and server.py. Name the one we mean rather than relying
+# on which wins.
+[tool.vercel]
+entrypoint = "app:app"
+
+# There is no importable `build_fighter` package here, just modules at the
+# root; without this uv tries to build one during the Vercel install step.
+[tool.uv]
+package = false

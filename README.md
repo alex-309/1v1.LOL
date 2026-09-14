@@ -4,9 +4,10 @@ A browser build-battle shooter — third-person movement and gunplay with instan
 grid building, in the style of 1v1.LOL. You host the server on this Mac and your
 friend joins from the same Wi-Fi or hotspot.
 
-Zero installs. No Node, no npm, no `pip install`. The server is one Python file
-using only the standard library, including a hand-rolled WebSocket
-implementation.
+Zero installs to play on your own network. No Node, no npm, no `pip install`.
+The server is one Python file using only the standard library, including a
+hand-rolled WebSocket implementation. (Deploying to Vercel is the one
+exception — see below.)
 
 ---
 
@@ -47,6 +48,71 @@ behaviour.
 This matters more than it sounds: an old server process keeps serving the
 **old rules** to a freshly reloaded page. Reloading the browser updates the
 page; only restarting the server updates the game.
+
+---
+
+## Put it online (Vercel)
+
+The LAN server above is still the better way to actually play. Deploy when you
+want to send someone a link instead of asking them onto your Wi-Fi.
+
+```
+npm i -g vercel
+vercel deploy
+```
+
+Three files drive this, and none of them touch the game:
+
+| File | Role |
+| --- | --- |
+| `app.py` | Vercel's entrypoint. Swaps the transport; imports every rule from `server.py`. |
+| `pyproject.toml` | Declares FastAPI, and names `app:app` as the entrypoint. |
+| `vercel.json` | Sets the function's max duration. |
+
+`server.py` is unchanged and still runs standalone. It stays the single source
+of truth for the arena, physics, build rules, bots and `CONFIG`; `app.py`
+imports all of it and only replaces the socket underneath. Retuning the game is
+still a matter of editing `CONFIG` in `server.py` and nothing else.
+
+This is the one part of the project that is not install-free — Vercel needs
+FastAPI to serve the game socket. To run the deployed app exactly as deployed:
+
+```
+uvicorn app:app --port 8080
+```
+
+**Requires Fluid compute**, which is on by default for projects created after
+April 2025. WebSockets do not work without it.
+
+### What you give up
+
+Vercel runs the game in a serverless function, and three consequences follow
+that no amount of configuration removes:
+
+**Matches are capped by the function's max duration** — 300 seconds on Hobby.
+When it expires the socket closes mid-match and players get the existing
+"Connection failed" screen; Retry reloads them into a fresh one. On Pro, raise
+`maxDuration` in `vercel.json` to 800 (or 1800, in beta).
+
+**Two players are only in the same match if they land on the same instance.**
+A connection is pinned to one instance for its life, and one instance happily
+holds several connections, so on a quiet deployment a friend joining does land
+with you. It is not guaranteed. Under concurrency Vercel starts more instances,
+and two players on different ones are in two different worlds — both playing,
+neither able to see the other. The world lives in that instance's memory, so
+there is no fix short of moving the whole 30Hz simulation behind shared storage,
+which is a rewrite rather than a setting.
+
+**The tick bills CPU the whole time anyone is connected.** A 30Hz simulation
+does not idle. `app.py` starts the tick on the first join and cancels it when
+the last player leaves, and wipes the world at the same time so nobody inherits
+the previous match's builds — but while a game is live, that is continuous
+Active CPU.
+
+If you want a deployment that holds a real match to the end and reliably puts
+everyone in the same world, the shape that fits is a single long-lived process —
+`python3 server.py` on any host that gives you one (Fly, Railway, a VPS), with
+no code changes at all.
 
 ---
 
@@ -93,6 +159,12 @@ between two boxes, so you can put one on the far side of the furthest floor you
 can reach. Ramps are the exception the other way: your own box, or the one
 directly in front, and no further. Walk one box forward and the whole radius
 moves with you.
+
+**Look down and it goes under you.** Aim at your own feet — past about 40
+degrees down — and a floor, ramp or cone lands in the box you are standing in
+rather than the one in front. That is how a ramp climb starts: ramp under
+yourself, ride it up, repeat. Walls are the exception, since a wall cannot go
+where you are standing; looking down with one still targets the storey below.
 
 **You cannot build through things.** If a wall, a cone or a chunk of the map
 stands between you and a box, that box is closed — you get the last one you can
@@ -204,6 +276,26 @@ menu, and `http://localhost:7777/whoami` reports what is actually running.
 **Blank page.** A red panel should appear at the bottom with the exact file and
 line. If it mentions three.js, run `start.command` once while online so it can
 download `three.min.js` (633 KB) next to `index.html`.
+
+**The screen goes white.** Two different faults wore this face. A muzzle flash
+is a bright sphere at the shooter's eye, and the third-person camera collapses
+onto your eye when your back is against a wall — so your own flash, or one from
+someone shooting you point-blank, used to fill the frame. Effects are now capped
+at the on-screen size they were meant to be, whatever the range.
+
+The other one was worse: effects arrive over the network but expire in the
+render loop, and the render loop stops when the tab is hidden or the window is
+covered. Left in the background through a firefight, the scene filled with tens
+of thousands of meshes nothing was clearing, all of which were drawn at once the
+moment you came back — the tab locked up, the browser killed the graphics
+context, and you were left on a white canvas while still standing there on
+everyone else's screen. Effects are no longer built while nothing is drawing
+them, and the lists are hard-capped.
+
+If a white screen ever comes back, look for a **"3D context lost"** row in the
+red error panel. That means the browser took the graphics context away — a GPU
+driver reset, waking from sleep, or too many 3D tabs — which is a machine
+problem, not a game one. Reload the page.
 
 **Everything is very slow.** Lower the FOV in the pause menu, and close other
 GPU-heavy tabs. The renderer targets 60fps with a few hundred build pieces.
