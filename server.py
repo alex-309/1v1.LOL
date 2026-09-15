@@ -2111,6 +2111,61 @@ class Game(object):
                 return p
         return None
 
+    # -- attaching a connection -------------------------------------------
+    #
+    # Both transports land here: the socket handler below, and the ASGI adapter
+    # in app.py that Vercel runs. Keeping the handshake in ONE place is not
+    # tidiness. A welcome missing `token` silently disables the client's
+    # reconnect -- index.html only retries while it holds one -- so a second
+    # copy of this that drifts turns every dropped connection into a dead
+    # session instead of a two-second blip. That is exactly what a duplicated
+    # copy of it did.
+    def attach(self, make_client, name, token, where=""):
+        """Put a new connection into the game. Returns (player, client, rejoined).
+
+        `make_client` is handed the player id and returns the transport's own
+        client object, so each transport keeps its own sender without this
+        method needing to know which one it is talking to.
+        """
+        p = self.reclaim(token)
+        rejoined = p is not None
+        if not rejoined:
+            p = self.new_player(name)
+        pid = p["id"]
+        client = make_client(pid)
+        self.clients[pid] = client
+        if self.host is None:
+            self.host = pid
+        client.send(self.welcome(p, rejoined))
+        if rejoined:
+            self.broadcast({"t": "rejoin", "p": self.public_player(p)}, exclude=pid)
+            print("  * %s rejoined%s" % (p["name"], where))
+        else:
+            self.broadcast({"t": "join", "p": self.public_player(p)}, exclude=pid)
+            print("  + %s joined%s" % (p["name"], where))
+        return p, client, rejoined
+
+    def welcome(self, p, rejoined):
+        """Everything a client needs to render the world it just walked into."""
+        return {
+            "t": "welcome", "id": p["id"], "host": self.host,
+            "build": BUILD_ID, "token": p["token"],
+            "rejoined": rejoined,
+            "config": CONFIG, "arena": ARENA, "spawns": SPAWNS,
+            "maps": ARENA_NAMES, "map": self.map_choice,
+            "mode": self.mode, "phase": self.phase,
+            "you": self.private_player(p),
+            "players": [self.public_player(q) for q in self.players.values()],
+            "pieces": [self.wire_piece(pc) for pc in self.pieces.values()],
+            "dummies": self.wire_dummies(),
+        }
+
+    def detach(self, pid):
+        """A connection went away. go_offline decides whether that means
+        "back in a moment" or "gone for good"."""
+        self.clients.pop(pid, None)
+        self.go_offline(pid)
+
     def sweep_offline(self, now):
         """Anyone past the grace period has really gone."""
         grace = CONFIG["REJOIN_GRACE"]
@@ -3058,35 +3113,11 @@ class Handler(socketserver.BaseRequestHandler):
                             continue
                         name = str(msg.get("name", "Player"))[:16].strip() or "Player"
                         # A token means "I was already here" -- see reclaim().
-                        p = GAME.reclaim(msg.get("token"))
-                        rejoined = p is not None
-                        if not rejoined:
-                            p = GAME.new_player(name)
+                        addr = self.client_address[0]
+                        p, client, _ = GAME.attach(
+                            lambda i: Client(sock, self.client_address, i),
+                            name, msg.get("token"), " from %s" % addr)
                         pid = p["id"]
-                        client = Client(sock, self.client_address, pid)
-                        GAME.clients[pid] = client
-                        if GAME.host is None:
-                            GAME.host = pid
-                        client.send({
-                            "t": "welcome", "id": pid, "host": GAME.host,
-                            "build": BUILD_ID, "token": p["token"],
-                            "rejoined": rejoined,
-                            "config": CONFIG, "arena": ARENA, "spawns": SPAWNS,
-                            "maps": ARENA_NAMES, "map": GAME.map_choice,
-                            "mode": GAME.mode, "phase": GAME.phase,
-                            "you": GAME.private_player(p),
-                            "players": [GAME.public_player(q) for q in GAME.players.values()],
-                            "pieces": [GAME.wire_piece(pc) for pc in GAME.pieces.values()],
-                            "dummies": GAME.wire_dummies(),
-                        })
-                        if rejoined:
-                            GAME.broadcast({"t": "rejoin", "p": GAME.public_player(p)},
-                                           exclude=pid)
-                            print("  * %s rejoined from %s" % (p["name"], self.client_address[0]))
-                        else:
-                            GAME.broadcast({"t": "join", "p": GAME.public_player(p)},
-                                           exclude=pid)
-                            print("  + %s joined from %s" % (name, self.client_address[0]))
                         continue
                     try:
                         GAME.handle(pid, msg)
@@ -3095,11 +3126,10 @@ class Handler(socketserver.BaseRequestHandler):
         finally:
             with GAME.lock:
                 if pid is not None:
-                    GAME.clients.pop(pid, None)
                     # Hold the slot rather than deleting it. A dropped
                     # connection and a player leaving look identical down here,
                     # and only one of them should cost someone their match.
-                    GAME.go_offline(pid)
+                    GAME.detach(pid)
             if client:
                 client.kill()
 

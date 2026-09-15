@@ -43,6 +43,7 @@ app = FastAPI()
 # instance may serve many connections over its life and they must all land in
 # the same world -- that is the whole reason two players can see each other.
 _tick_task = None
+_reaper_task = None
 
 
 # ---------------------------------------------------------------------------
@@ -134,20 +135,40 @@ async def _tick_loop():
 
 
 def _start_tick():
-    global _tick_task
+    global _tick_task, _reaper_task
+    if _reaper_task is not None:
+        _reaper_task.cancel()      # somebody came back; call off the wipe
+        _reaper_task = None
     if _tick_task is None or _tick_task.done():
         _tick_task = asyncio.ensure_future(_tick_loop())
 
 
-def _stop_tick_if_idle():
-    """Last player out turns off the lights -- and wipes the world.
-
-    An instance is reused for connections that have nothing to do with each
-    other. Without this reset the next player to arrive would walk into the
-    previous match's builds, bots and scores.
-    """
-    global _tick_task
+def _on_disconnect():
+    global _reaper_task
     if bf.GAME.clients:
+        return
+    if _reaper_task is None or _reaper_task.done():
+        _reaper_task = asyncio.ensure_future(_idle_reaper())
+
+
+async def _idle_reaper():
+    """Last player out does NOT immediately turn off the lights.
+
+    go_offline() parks a dropped player for REJOIN_GRACE seconds so a blip does
+    not cost them the match, and here a whole lobby can drop at once -- every
+    connection on an instance closes together when the function hits its max
+    duration. Wiping the world the moment `clients` empties would turn that
+    shared blip into everyone losing the match at the same time, which is the
+    one case the parking exists to prevent. So keep ticking long enough for
+    sweep_offline() to make the call, and only reset if nobody came back.
+    """
+    global _tick_task, _reaper_task
+    try:
+        await asyncio.sleep(bf.CONFIG["REJOIN_GRACE"] + 2.0)
+    except asyncio.CancelledError:
+        return
+    if bf.GAME.clients:
+        _reaper_task = None
         return
     if _tick_task is not None:
         _tick_task.cancel()
@@ -155,6 +176,8 @@ def _stop_tick_if_idle():
     # Safe to re-run __init__ here: no clients remain and the tick is cancelled,
     # so nothing holds the lock we are about to replace.
     bf.GAME.__init__()
+    _reaper_task = None
+    print("  idle -- world reset")
 
 
 # ---------------------------------------------------------------------------
@@ -174,23 +197,14 @@ async def game_socket(ws: WebSocket):
                 continue
             name = str(msg.get("name", "Player"))[:16].strip() or "Player"
             with GAME.lock:
-                p = GAME.new_player(name)
+                # Deliberately server.py's handshake rather than a copy of it.
+                # The welcome it builds carries the rejoin token, and the client
+                # only retries a dropped socket while it holds one -- which
+                # matters far more here than on a LAN, because Vercel closes
+                # every connection when the function hits its max duration.
+                p, client, _ = GAME.attach(lambda i: SocketClient(i),
+                                           name, msg.get("token"))
                 pid = p["id"]
-                client = SocketClient(pid)
-                GAME.clients[pid] = client
-                if GAME.host is None:
-                    GAME.host = pid
-                client.send({
-                    "t": "welcome", "id": pid, "host": GAME.host,
-                    "build": bf.BUILD_ID,
-                    "config": bf.CONFIG, "arena": bf.ARENA, "spawns": bf.SPAWNS,
-                    "mode": GAME.mode, "phase": GAME.phase,
-                    "players": [GAME.public_player(q) for q in GAME.players.values()],
-                    "pieces": [GAME.wire_piece(pc) for pc in GAME.pieces.values()],
-                    "dummies": GAME.wire_dummies(),
-                })
-                GAME.broadcast({"t": "join", "p": GAME.public_player(p)}, exclude=pid)
-            print("  + %s joined" % name)
             _start_tick()
 
         # -- steady state: reader and writer race; either ending ends both ----
@@ -211,13 +225,10 @@ async def game_socket(ws: WebSocket):
     finally:
         with bf.GAME.lock:
             if pid is not None:
-                bf.GAME.clients.pop(pid, None)
-                nm = bf.GAME.players.get(pid, {}).get("name", "?")
-                bf.GAME.remove_player(pid)
-                print("  - %s left" % nm)
+                bf.GAME.detach(pid)
         if client:
             client.kill()
-        _stop_tick_if_idle()
+        _on_disconnect()
 
 
 async def _recv_json(ws):
