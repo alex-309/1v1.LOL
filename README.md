@@ -157,7 +157,7 @@ preference rather than balance:
 | **Turbo build** | on | Hold left mouse to keep placing. Off means one click, one piece. |
 | **Edit on release** | off | Hold the edit key, drag, let go to apply — one motion instead of three. Off keeps the press-to-enter / press-to-reset toggle. |
 | **First person** | off | Camera at the eye with a viewmodel. Third person is easier to build in, which is why this is a switch and not a replacement. |
-| **Killcam** | on | On death, replay the last 2.6s from your killer's view. Click to skip. |
+| **Instant replay** | on | On death, replay the last 2.6s from your killer's view. Click to skip, click again to rewatch. Off still leaves you the death-spot camera. |
 
 Every key is rebindable in the pause menu (`Esc`), and there are **three
 independent presets** — say one for a mouse, one for a trackpad, one for whoever
@@ -326,8 +326,10 @@ ago. The shooter is never rewound; they see themselves in the present.
 
 **Spectating** has two cameras, because the two things you want are different:
 *follow* rides whoever is playing (click to switch), *free* is a flying camera
-you steer yourself (`T` toggles). Follow is the killcam rig pointed at a live
-player; free is the local controller with gravity and collision switched off.
+you steer yourself (`T` toggles). Follow is the replay rig pointed at a live
+player — raise and all, so fixing how that camera frames someone fixes both
+places it is used — and free is the local controller with gravity and collision
+switched off.
 
 **Stats.** Kills and deaths say who won; accuracy, damage, pieces built and
 materials farmed say how. Accuracy is counted per *trigger pull*, not per
@@ -338,10 +340,66 @@ intermission between rounds shows the running numbers; the end card shows the
 match. Your lifetime record lives in `localStorage` and is shown on the menu —
 it is never sent anywhere.
 
-**Killcam.** Die and you watch your last 2.6 seconds from over your killer's
-shoulder. It costs nothing on the wire: the snapshot buffer already holds every
+**The death screen.** Dying is dead time, and there are two different things
+worth doing with it. The **instant replay** answers *what just happened to me*:
+your last 2.6 seconds from over the killer's shoulder. The **death spot**
+answers *what is happening now*: a fixed camera where you went down, free to
+look anywhere, running live until you respawn. **Click moves between them**, in
+either direction, as often as the wait allows — a replay you skipped is never
+gone, and watching it twice costs nothing. The panel counts your respawn down,
+or says it is the round you are waiting on.
+
+Neither costs anything on the wire. The snapshot buffer already holds every
 player's position, yaw and pitch, so the replay is the same interpolation run
-backwards with the camera parented somewhere else. Click to skip, or turn it off.
+with the camera parented somewhere else. The one thing it could not do before
+was play *twice*: the live buffer is a ring that drops frames older than a few
+seconds, so by the time you asked for a second look the tape had been recorded
+over — and asking again for "the last 2.6 seconds" would have replayed the
+wrong ones, the seconds *after* you died. Death now cuts its window out into a
+tape of its own, and the tape outlives the ring.
+
+**The replay camera sits higher than the player it follows.** The old rig was
+2.2m back at eye height, which put the camera inside the shoulders it was meant
+to be looking over: the body took the middle of the frame and the sprites
+floating above the head took what was left. It is now 3.5m back and a metre up,
+and it stops copying the player's pitch — offset like that, their pitch aims the
+middle of the screen somewhere over their target's head. It aims at a point down
+their sight line instead, which keeps whatever they were shooting at centred no
+matter where the camera is standing. The health bar over the head of the player
+being filmed is hidden for the same reason: it draws with depth testing off, so
+it goes over everything in front of it, and it is the sprite nearest the lens.
+
+**Nobody wears their name over their head.** A nametag is the same kind of
+sprite — pinned to a world position with depth testing off, so it draws over
+everything in front of it, and the closer a camera gets the more of the screen
+it takes. Two metres behind a player, which is exactly where the replay and
+follow cameras sit, one plate was most of the view. The name was never carrying
+much either: you are always blue and everyone shooting at you is always red,
+which answers *can I shoot this* on its own.
+
+**The combat report** is where a name gets attached to a number instead, down
+the right of the screen. Take a hit and a row names who did it, with what, from
+how far, and how much health you have left; land one and you get the same row
+about them. Colour carries the direction and nothing else, on the rule the
+player models already follow — **cyan is you, red is them**, so a cyan row is
+damage you dealt and a red row is damage you took. A kill leaves the pair for
+gold.
+
+It is one row per player per exchange, not one per bullet: a rifle burst is a
+single event to whoever is on either end of it, and three rows saying 22 tell
+you less than one row saying 66 ×3. A row still on screen absorbs the next hit
+from the same player and resets its own clock, so the number grows while the
+fight is happening and settles when it stops. Rows freeze while you are dead —
+the report of the fight that just killed you is the one you most want to read,
+and it must not time out underneath the screen that exists to show it.
+
+The two directions reach the client differently, and the difference is real.
+Damage you took rides the `you` message you were already getting; damage you
+dealt is a new `dealt` message, sent from `apply_damage` rather than from the
+hitscan path. That is what puts **grenades** on the feed — an explosion never
+casts a ray of yours, so it never sent a hitmarker — and what makes the numbers
+match the scoreboard: both are credited as what actually landed, so overkill on
+someone with 3hp left is 3 damage in both places.
 
 ---
 

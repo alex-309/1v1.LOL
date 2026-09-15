@@ -314,23 +314,67 @@ kbd{display:inline-block;min-width:26px;text-align:center;background:var(--panel
   color:var(--accent);text-transform:uppercase;margin-top:6px}
 .rcbox s{display:block;text-decoration:none;font-size:11px;color:var(--dim2);margin-top:9px}
 
-/* killcam -- the live HUD is meaningless during a replay, so it goes away */
+/* death screen -- the live HUD is meaningless when you have nothing to shoot
+   with, so it goes away for both the replay and the wait that follows it */
 #hud.spectating #cross,#hud.spectating #slots,#hud.spectating #ammo,
 #hud.spectating #matbox,#hud.spectating #vitals{display:none}
 #hud.replay #cross,#hud.replay #slots,#hud.replay #ammo,#hud.replay #matbox,
-#hud.replay #vitals,#hud.replay #pieceinfo,#hud.replay #edithint{opacity:0;
+#hud.replay #vitals,#hud.replay #pieceinfo,#hud.replay #edithint,
+#hud.dead #cross,#hud.dead #slots,#hud.dead #ammo,#hud.dead #matbox,
+#hud.dead #vitals,#hud.dead #pieceinfo,#hud.dead #edithint{opacity:0;
   transition:opacity .2s linear;pointer-events:none}
-#killcam{position:absolute;left:50%;top:22px;transform:translateX(-50%);text-align:center;
+#deathcam{position:absolute;left:50%;top:22px;transform:translateX(-50%);text-align:center;
   background:rgba(8,13,20,.86);border:1px solid var(--line2);padding:10px 26px 12px;
-  min-width:230px;
+  min-width:250px;
   clip-path:polygon(0 0,calc(100% - 11px) 0,100% 11px,100% 100%,11px 100%,0 calc(100% - 11px))}
-#killcam u{display:block;font:700 8.5px var(--fb);letter-spacing:.3em;color:var(--bad);
+#deathcam.hidden{display:none}
+#deathcam u{display:block;font:700 8.5px var(--fb);letter-spacing:.3em;color:var(--bad);
   text-decoration:none;text-transform:uppercase}
-#killcam b{display:block;font:400 22px/1.25 var(--fh);color:#fff;letter-spacing:.02em}
-#killcam .kcbar{height:2px;background:var(--line);margin:9px 0 7px;overflow:hidden}
-#killcam .kcbar i{display:block;height:100%;width:0;background:var(--bad)}
-#killcam s{display:block;text-decoration:none;font:700 8.5px var(--fb);letter-spacing:.2em;
+#deathcam b{display:block;font:400 22px/1.25 var(--fh);color:#fff;letter-spacing:.02em}
+#deathcam .kcbar{height:2px;background:var(--line);margin:9px 0 7px;overflow:hidden}
+#deathcam .kcbar i{display:block;height:100%;width:0;background:var(--bad)}
+/* Waiting is a different thing from replaying and gets a different channel:
+   red is the tape running out, accent is the clock running down to your own
+   respawn. */
+#deathcam.waiting u{color:var(--accent)}
+#deathcam.waiting .kcbar i{background:var(--accent);transition:width .2s linear}
+#deathcam s{display:block;text-decoration:none;font:700 8.5px var(--fb);letter-spacing:.2em;
   color:var(--dim2);text-transform:uppercase}
+
+/* Combat report. Nobody has a nametag over their head any more, so this is
+   where a name gets attached to a number: who hit you, with what, from how
+   far, and the same ledger for what you landed.
+
+   Colour carries the direction and nothing else, on the rule the player
+   models already use -- CYAN is you, RED is them. So a cyan row is damage
+   you dealt and a red row is damage you took, and the two never have to be
+   read to be told apart. */
+#combat{position:absolute;right:30px;top:33%;width:236px;display:flex;
+  flex-direction:column;gap:6px;pointer-events:none}
+.cbt{background:rgba(8,13,20,.86);border:1px solid var(--line);
+  border-left:2px solid var(--bad);padding:7px 11px 8px;
+  animation:cbtin .18s cubic-bezier(.2,.8,.3,1);transition:opacity .3s linear}
+.cbt.out{border-left-color:var(--accent)}
+.cbt.gone{opacity:0}
+.cbt .cbtop{display:flex;align-items:baseline;justify-content:space-between;gap:10px}
+.cbt b{font-size:12.5px;font-weight:600;letter-spacing:.02em;color:var(--txt);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cbt em{font-style:normal;font:400 19px/1 var(--fh);color:var(--bad);
+  text-shadow:0 0 14px rgba(255,65,96,.35);flex:none}
+.cbt.out em{color:var(--accent);text-shadow:0 0 14px rgba(57,208,255,.35)}
+.cbt s{display:block;text-decoration:none;margin-top:4px;font:700 8.5px var(--fb);
+  letter-spacing:.13em;color:var(--dim2);text-transform:uppercase;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cbt s i{font-style:normal;color:var(--bad)}          /* the headshot marker */
+.cbt .chp{height:3px;margin-top:7px;background:rgba(4,8,14,.8);overflow:hidden}
+.cbt .chp i{display:block;height:100%;width:100%;background:var(--hp);
+  transition:width .18s cubic-bezier(.2,.8,.3,1)}
+/* A row that ended in a kill stops being a damage number and becomes an
+   outcome, so it leaves the red/cyan pair entirely. */
+.cbt.kill{border-left-color:var(--gold)}
+.cbt.kill em{color:var(--gold);text-shadow:0 0 14px rgba(255,209,102,.4)}
+.cbt.kill s i{color:var(--gold)}
+@keyframes cbtin{from{opacity:0;transform:translateX(16px)}}
 
 /* build trainer */
 #course{position:absolute;left:30px;top:80px;background:rgba(8,13,20,.86);
@@ -523,6 +567,7 @@ kbd{display:inline-block;min-width:26px;text-align:center;background:var(--panel
   #matbox{right:18px;bottom:116px}
   .slot{width:46px;height:44px}
   #stat,#killfeed{display:none}
+  #combat{width:168px;right:14px;top:26%}
 }
 </style>
 
@@ -567,6 +612,7 @@ kbd{display:inline-block;min-width:26px;text-align:center;background:var(--panel
 
   <div id="slots"></div>
   <div id="killfeed"></div>
+  <div id="combat"></div>
   <div id="roundmsg" class="hidden"></div>
   <div id="dmgnums"></div>
   <div id="dmgdir"></div>
@@ -579,8 +625,8 @@ kbd{display:inline-block;min-width:26px;text-align:center;background:var(--panel
     <s></s>
   </div>
   <div id="specbar" class="hidden"><u>Spectating</u><b></b><i></i></div>
-  <div id="killcam" class="hidden">
-    <u>Killcam</u><b>Killer</b>
+  <div id="deathcam" class="hidden">
+    <u>Instant replay</u><b>Killer</b>
     <div class="kcbar"><i></i></div>
     <s>Click to skip</s>
   </div>
@@ -722,7 +768,7 @@ kbd{display:inline-block;min-width:26px;text-align:center;background:var(--panel
         <u></u>
       </div>
       <div class="opt" id="opt-killcam">
-        <span><b>Killcam</b><i>Watch the last few seconds from your killer's view &mdash; click to skip</i></span>
+        <span><b>Instant replay</b><i>On death, replay your last seconds from the killer's view &mdash; click to skip it, click again to rewatch. Off still leaves you the death-spot camera</i></span>
         <u></u>
       </div>
     </div>
@@ -2506,21 +2552,9 @@ function updateSpectate(dt) {
     camera.rotation.set(-35 * DEG, 0, 0, 'YXZ');
     return;
   }
-  const pitch = clamp(t.rpitch || 0, -85, 85), yaw = t.ryaw || 0;
-  const q = new THREE.Euler(pitch * DEG, yaw * DEG, 0, 'YXZ');
-  const fwd = new THREE.Vector3(0, 0, -1).applyEuler(q);
-  const eye = new THREE.Vector3(t.rpos[0], t.rpos[1] + CFG.EYE, t.rpos[2]);
-  const want = eye.clone().add(fwd.clone().multiplyScalar(-2.6))
-                 .add(new THREE.Vector3(0, 0.4, 0));
-  const dir = want.clone().sub(eye), dist = dir.length();
-  if (dist > 0.01) {
-    dir.normalize();
-    const hit = raycast([eye.x, eye.y, eye.z], [dir.x, dir.y, dir.z],
-                        getColliders(), dist + 0.3);
-    if (hit.t !== null) want.copy(eye).add(dir.multiplyScalar(Math.max(0.2, hit.t - 0.25)));
-  }
-  camera.position.copy(want);
-  camera.rotation.set(pitch * DEG, yaw * DEG, 0, 'YXZ');
+  // the replay rig pointed at a live player, raise and all -- one camera, so
+  // fixing how it frames a player fixes both places it is used
+  shoulderCam(t.rpos, t.ryaw || 0, t.rpitch || 0);
 }
 
 /* First person is the genre's native view and third person is better for
@@ -2528,7 +2562,9 @@ function updateSpectate(dt) {
    also deletes a whole class of problem while it is on: the two-step camera
    raycast in fire() exists purely to stop a third-person shoulder offset from
    sending shots somewhere other than the crosshair. */
-function firstPerson() { return !!settings.fpv && !killcam.active && !state.spectator; }
+function firstPerson() {
+  return !!settings.fpv && !killcam.active && !deathcam.active && !state.spectator;
+}
 function updateCamera(dt) {
   const ads = state.ads && !isBuildHand(state.hand);
   const w = CFG.WEAPONS[state.hand];
@@ -3516,246 +3552,17 @@ function throwGrenade() {
 /* =========================================================================
    12. Remote players
    ========================================================================= */
-/* Names sit on a dark plate with a team-coloured border and a heavy outline,
-   so they stay legible against sky, snow, wood or shadow alike -- white text
-   alone disappears the moment the background goes pale. */
-function makeNametag(name, mine) {
-  const W = 512, H = 128;
-  const cv = document.createElement('canvas');
-  cv.width = W; cv.height = H;
-  const g = cv.getContext('2d');
-  const font = 'bold 54px "Chakra Petch",-apple-system,system-ui,sans-serif';
-  g.font = font;
-  const tw = g.measureText(name).width;
-  const bw = Math.min(W - 12, tw + 56), bh = 82;
-  const bx = (W - bw) / 2, by = (H - bh) / 2, r = 14;
+/* Nobody wears their name over their head. A nametag is a screen-space plate
+   pinned to a world position with depth testing off, which means it draws over
+   everything in front of it -- and the closer the camera gets, the more of the
+   screen it takes. Two metres behind a player, which is exactly where the
+   replay and follow cameras sit, one plate is most of the view.
 
-  g.beginPath();
-  g.moveTo(bx + r, by);
-  g.lineTo(bx + bw - r, by);   g.quadraticCurveTo(bx + bw, by, bx + bw, by + r);
-  g.lineTo(bx + bw, by + bh - r); g.quadraticCurveTo(bx + bw, by + bh, bx + bw - r, by + bh);
-  g.lineTo(bx + r, by + bh);   g.quadraticCurveTo(bx, by + bh, bx, by + bh - r);
-  g.lineTo(bx, by + r);        g.quadraticCurveTo(bx, by, bx + r, by);
-  g.closePath();
-  g.fillStyle = 'rgba(6,10,16,0.78)';
-  g.fill();
-  g.lineWidth = 5;
-  g.strokeStyle = mine ? 'rgba(57,208,255,0.95)' : 'rgba(255,65,96,0.95)';
-  g.stroke();
-
-  g.font = font;
-  g.textAlign = 'center'; g.textBaseline = 'middle';
-  g.lineWidth = 8; g.strokeStyle = 'rgba(0,0,0,0.92)';
-  g.strokeText(name, W / 2, H / 2 + 2);
-  g.fillStyle = '#ffffff';
-  g.fillText(name, W / 2, H / 2 + 2);
-
-  const tex = new THREE.CanvasTexture(cv);
-  const sp = new THREE.Sprite(new THREE.SpriteMaterial({
-    map: tex, depthTest: false, transparent: true,
-  }));
-  sp.scale.set(2.6, 0.65, 1);
-  sp.renderOrder = 999;
-  return sp;
-}
-
-// Blocky game-style mannequin. Returns a THREE.Group of named meshes.
-// (Authored in Claude Design as mannequin.js -- geometry kept verbatim; the
-//  only change is using the global THREE instead of an ES-module import.)
-function buildMannequin(palette) {
-  const body = new THREE.MeshStandardMaterial({
-    name: palette.name + '_body', color: palette.body, roughness: 0.55, metalness: 0.1
-  });
-  const dark = new THREE.MeshStandardMaterial({
-    name: palette.name + '_extremity', color: palette.dark, roughness: 0.65, metalness: 0.1
-  });
-  const joint = new THREE.MeshStandardMaterial({
-    name: palette.name + '_joint', color: palette.joint, roughness: 0.4, metalness: 0.15
-  });
-
-  const g = new THREE.Group();
-  g.name = 'mannequin_' + palette.name;
-
-  const add = (name, geo, mat, pos, rot) => {
-    const m = new THREE.Mesh(geo, mat);
-    m.name = name;
-    m.position.set(pos[0], pos[1], pos[2]);
-    if (rot) m.rotation.set(rot[0], rot[1], rot[2]);
-    m.castShadow = true;
-    m.receiveShadow = true;
-    g.add(m);
-    return m;
-  };
-
-  const box = (w, h, d) => new THREE.BoxGeometry(w, h, d);
-  const cyl = (rt, rb, h) => new THREE.CylinderGeometry(rt, rb, h, 32);
-  const ball = r => new THREE.SphereGeometry(r, 32, 20);
-
-  // ---- torso ----
-  add('chest', box(0.50, 0.32, 0.27), body, [0, 1.42, 0]);
-  add('chest_bevel_top', box(0.44, 0.05, 0.22), body, [0, 1.60, 0]);
-  add('abdomen', box(0.38, 0.16, 0.23), body, [0, 1.20, 0]);
-  add('pelvis', box(0.44, 0.17, 0.25), body, [0, 1.05, 0]);
-
-  // ---- head ----
-  add('neck', cyl(0.075, 0.085, 0.12), dark, [0, 1.655, 0]);
-  add('head', box(0.25, 0.30, 0.27), body, [0, 1.86, 0.005]);
-  add('head_crown', box(0.20, 0.04, 0.22), body, [0, 2.02, 0.005]);
-
-  // ---- arms (mirrored) ----
-  for (const s of [-1, 1]) {
-    const side = s < 0 ? 'L' : 'R';
-    const tilt = s * 0.34; // A-pose so the arms clear the torso
-    add('shoulder_' + side, ball(0.105), joint, [s * 0.275, 1.51, 0]);
-
-    const shX = s * 0.275, shY = 1.51;
-    const upperLen = 0.38, foreLen = 0.34;
-    const ex = shX + Math.sin(tilt) * upperLen, ey = shY - Math.cos(tilt) * upperLen;
-    add('upper_arm_' + side, cyl(0.085, 0.075, upperLen), body,
-      [(shX + ex) / 2, (shY + ey) / 2, 0], [0, 0, tilt]);
-
-    add('elbow_' + side, ball(0.078), joint, [ex, ey, 0]);
-    const wx = ex + Math.sin(tilt) * foreLen, wy = ey - Math.cos(tilt) * foreLen;
-    add('forearm_' + side, cyl(0.072, 0.062, foreLen), body,
-      [(ex + wx) / 2, (ey + wy) / 2, 0], [0, 0, tilt]);
-
-    add('wrist_' + side, ball(0.06), joint, [wx, wy, 0]);
-    add('hand_' + side, box(0.10, 0.20, 0.12), dark, [wx + Math.sin(tilt) * 0.115, wy - 0.11, 0.005], [0, 0, tilt]);
-    add('thumb_' + side, box(0.045, 0.09, 0.05), dark,
-      [wx + Math.sin(tilt) * 0.10 - s * 0.065, wy - 0.07, 0.03], [0, 0, tilt]);
-  }
-
-  // ---- legs (mirrored) ----
-  for (const s of [-1, 1]) {
-    const side = s < 0 ? 'L' : 'R';
-    const x = s * 0.125;
-    add('hip_' + side, ball(0.11), joint, [x, 0.99, 0]);
-    add('thigh_' + side, cyl(0.105, 0.09, 0.44), body, [x, 0.765, 0]);
-    add('knee_' + side, ball(0.095), joint, [x, 0.545, 0]);
-    add('shin_' + side, cyl(0.09, 0.072, 0.44), body, [x, 0.325, 0]);
-    add('ankle_' + side, ball(0.068), joint, [x, 0.11, 0]);
-    add('foot_' + side, box(0.155, 0.10, 0.30), dark, [x, 0.055, 0.055]);
-    add('toe_' + side, box(0.14, 0.06, 0.07), dark, [x, 0.035, 0.235]);
-  }
-
-  return g;
-}
-
-const PALETTES = {
-  blue: { name: 'blue', body: 0x2f6fd0, dark: 0x1d4a94, joint: 0x2559ad },
-  red: { name: 'red', body: 0xcf3b34, dark: 0x8f231f, joint: 0xac2b26 }
-};
-
-/* ------------------------------------------------------------------------
-   Rigging the mannequin for gameplay.
-
-   buildMannequin() returns a FLAT list of named meshes -- perfect for a
-   turntable preview, but limbs can't swing without a hierarchy. So the parts
-   are re-parented into pivot groups placed at the real joints (shoulder, hip,
-   neck) and each child is offset by the pivot, which preserves its exact
-   position while making rotation possible.
-   ------------------------------------------------------------------------ */
-function rigMannequin(flat) {
-  const rig = new THREE.Group();
-  const pivot = (name, px, py, pz, parts) => {
-    const p = new THREE.Group();
-    p.name = name;
-    p.position.set(px, py, pz);
-    for (const n of parts) {
-      const m = flat.getObjectByName(n);
-      if (!m) continue;
-      m.position.set(m.position.x - px, m.position.y - py, m.position.z - pz);
-      p.add(m);
-    }
-    rig.add(p);
-    return p;
-  };
-  // joint centres taken from mannequin.js
-  pivot('pivot_head', 0, 1.60, 0, ['neck', 'head', 'head_crown']);
-  for (const s of [['L', -1], ['R', 1]]) {
-    pivot('pivot_arm' + s[0], s[1] * 0.275, 1.51, 0,
-      ['shoulder_', 'upper_arm_', 'elbow_', 'forearm_', 'wrist_', 'hand_', 'thumb_']
-        .map(n => n + s[0]));
-    pivot('pivot_leg' + s[0], s[1] * 0.125, 0.99, 0,
-      ['hip_', 'thigh_', 'knee_', 'shin_', 'ankle_', 'foot_', 'toe_'].map(n => n + s[0]));
-  }
-  const torso = new THREE.Group();
-  torso.name = 'pivot_torso';
-  for (const m of flat.children.slice()) torso.add(m);   // whatever is left
-  rig.add(torso);
-  return rig;
-}
-
-/* One rigged template per team, cloned per player. Object3D.clone() shares
-   geometry and materials, so N characters cost one set of buffers. */
-const DUMMY_PALETTE = { name: 'dummy', body: 0x9aa6b8, dark: 0x6b7688, joint: 0x808c9e };
-const _mannequins = {};
-function mannequinTemplate(team) {
-  if (_mannequins[team]) return _mannequins[team];
-  const pal = team === 'dummy' ? DUMMY_PALETTE : PALETTES[team];
-  const rig = rigMannequin(buildMannequin(pal));
-
-  // A weapon so you can see what you're holding. Parented to the right arm's
-  // pivot, long axis along -Y, so it follows the arm when it swings forward.
-  const gun = new THREE.Group();
-  gun.name = 'gun';
-  const gunMat = new THREE.MeshStandardMaterial({ color: 0x2b3038, roughness: 0.5, metalness: 0.35 });
-  const barrel = new THREE.Mesh(new THREE.BoxGeometry(0.075, 0.52, 0.085), gunMat);
-  barrel.position.set(0, -0.20, 0);
-  const grip = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.16, 0.10), gunMat);
-  grip.position.set(0, 0.03, 0.02);
-  for (const m of [barrel, grip]) { m.castShadow = true; gun.add(m); }
-  gun.position.set(0.28, -0.80, 0.02);
-  rig.getObjectByName('pivot_armR').add(gun);
-
-  /* Normalise to the collision box: the model is authored ~2.04m tall but the
-     player hitbox is CFG.P_H. Scaling from the measured bounds (rather than a
-     hardcoded number) keeps the visual and the hitbox aligned even if the
-     source model changes -- otherwise you'd be shooting at a head that isn't
-     where the server thinks it is. */
-  // The mannequin is authored facing +Z (toes at z = +0.235); the game's
-  // forward is -Z, so turn the rig around to match.
-  rig.rotation.y = Math.PI;
-  rig.updateMatrixWorld(true);
-  const box = new THREE.Box3().setFromObject(rig);
-  const k = CFG.P_H / Math.max(0.001, box.max.y - box.min.y);
-  rig.scale.setScalar(k);
-  rig.position.y = -box.min.y * k;
-  _mannequins[team] = rig;
-  return rig;
-}
-
-function makeBody(team) {
-  // Outer group is what the crouch animation scales on Y, so it never fights
-  // the uniform height-normalisation scale on the rig inside it.
-  const body = new THREE.Group();
-  const rig = mannequinTemplate(team).clone(true);
-  body.add(rig);
-  const get = (n) => rig.getObjectByName(n);
-  body.userData = {
-    head: get('pivot_head'), torso: get('pivot_torso'),
-    armL: get('pivot_armL'), armR: get('pivot_armR'),
-    legL: get('pivot_legL'), legR: get('pivot_legR'),
-    gun: get('gun'),
-  };
-  return body;
-}
-
-/* Swap a player's body colour when their side changes -- teams are assigned at
-   match start, after everyone's model already exists. */
-function reskinBody(rp) {
-  if (!rp || !rp.grp || !rp.body) return;
-  const friendly = sameTeam(rp);
-  const nb = makeBody(friendly ? 'blue' : 'red');
-  rp.grp.remove(rp.body);
-  disposeMesh(rp.body);
-  rp.grp.add(nb);
-  rp.body = nb;
-}
-function reskinAllBodies() {
-  for (const rp of state.players.values()) reskinBody(rp);
-}
-
+   The name was never the point either: you are always blue and everyone
+   shooting at you is always red, and that answers "can I shoot this" on its
+   own. Which particular red player just hit you is a question you ask AFTER
+   the shot lands, and #combat answers it with the damage attached.
+   ========================================================================= */
 function makeHealthBar() {
   const g = new THREE.Group();
   const bg = new THREE.Sprite(new THREE.SpriteMaterial({ color: 0x101620, depthTest: false }));
@@ -3783,13 +3590,11 @@ function ensurePlayer(p) {
     const friendly = state.mode === 'team'
       ? (p.team || 0) === myTeam() : mine;
     const body = makeBody(friendly ? 'blue' : 'red');
-    const tag = makeNametag(p.name, friendly);
-    tag.position.y = 2.1;
     const bar = makeHealthBar();
     bar.position.y = 1.94;
-    grp.add(body); grp.add(tag); grp.add(bar);
+    grp.add(body); grp.add(bar);
     scene.add(grp);
-    if (p.id === state.myId) { tag.visible = false; bar.visible = false; }
+    if (p.id === state.myId) bar.visible = false;
     rp = {
       id: p.id, name: p.name, bot: p.bot, grp, body, bar,
       rpos: p.pos ? p.pos.slice() : [0, 0, 0], ryaw: p.yaw || 0, rpitch: 0,
@@ -3814,9 +3619,9 @@ function dropPlayer(id) {
   const rp = state.players.get(id);
   if (!rp) return;
   scene.remove(rp.grp);
-  /* Taking it out of the scene is not freeing it. Each player carries a
-     512x128 canvas texture for their nametag plus two health-bar sprites, and
-     cycling bots in and out of a lobby leaks a texture every time.
+  /* Taking it out of the scene is not freeing it. Each player carries two
+     health-bar sprites with materials of their own, and cycling bots in and
+     out of a lobby leaks them every time.
 
      Sprites only, deliberately: the body is an Object3D.clone() of the team
      template and SHARES its geometry and materials, so disposing those would
@@ -3846,13 +3651,18 @@ function pushSnapshot(msg) {
    `includeMe` is the whole difference between live play and a replay: normally
    the local player is drawn from live input and must NOT be dragged around by
    the network, but a killcam has no live input to draw from -- it is watching
-   someone else's last few seconds, and you are one of the people in it. */
-function applySnapshot(ts, includeMe) {
-  if (!Net.buffer.length) return;
-  let a = Net.buffer[0], b = Net.buffer[Net.buffer.length - 1];
-  for (let i = 0; i < Net.buffer.length - 1; i++) {
-    if (Net.buffer[i].ts <= ts && Net.buffer[i + 1].ts >= ts) {
-      a = Net.buffer[i]; b = Net.buffer[i + 1]; break;
+   someone else's last few seconds, and you are one of the people in it.
+
+   `src` is the other half of that: live play reads the ring, a replay reads
+   the tape cut from it at the moment of death. Same frames, same shape, but
+   the tape is not overwritten while you sit watching it. */
+function applySnapshot(ts, includeMe, src) {
+  const buf = src || Net.buffer;
+  if (!buf.length) return;
+  let a = buf[0], b = buf[buf.length - 1];
+  for (let i = 0; i < buf.length - 1; i++) {
+    if (buf[i].ts <= ts && buf[i + 1].ts >= ts) {
+      a = buf[i]; b = buf[i + 1]; break;
     }
   }
   const span = Math.max(1, b.ts - a.ts);
@@ -3888,72 +3698,317 @@ function sampleRemote(dt) {
 }
 
 /* =========================================================================
-   Killcam -- replayed straight out of the snapshot buffer.
+   The death screen -- an instant replay, then the spot you fell on.
 
-   No extra recording and nothing new on the wire: the buffer already holds
-   every player's position, yaw and pitch for the last few seconds, which is
-   exactly what a replay needs. Watching it is a matter of running the same
-   interpolation backwards in time with the camera parented to the killer's
-   eye instead of your own.
+   Dying is dead time, and the two things worth doing with it are different
+   questions. The REPLAY answers "what just happened to me": the last 2.6
+   seconds from over the killer's shoulder. The DEATH SPOT answers "what is
+   happening now": a fixed camera where you went down, free to look anywhere,
+   running live until you respawn. A click moves between them, either
+   direction, as many times as the wait allows -- so a replay you skipped is
+   never gone, and watching it twice costs nothing.
+
+   It costs nothing on the wire either. The snapshot buffer already holds
+   every player's position, yaw and pitch, so the replay is the same
+   interpolation run with the camera parented somewhere else. The one thing
+   the old version could not do was play twice: the live buffer is a ring that
+   drops frames older than a few seconds, so by the time you asked for a
+   second look the tape had been recorded over, and asking for "the last 2.6
+   seconds" again would have replayed the wrong ones -- the seconds after you
+   died. So death now CUTS its window out into a tape of its own and plays
+   from there, and the tape outlives the ring.
    ========================================================================= */
 let hbAcc = 0;                    // low-health heartbeat timer
 const KILLCAM_MS = 2600;
 const killcam = { active: false, t: 0, to: 0, by: null };
-function killcamAvailable(byId) {
-  return settings.killcam && byId != null && byId !== state.myId &&
-         state.players.has(byId) && Net.buffer.length > 8;
+/* Holding references to frames the ring is about to drop costs nothing: these
+   are the same objects, not copies of them. */
+const tape = { frames: [], from: 0, to: 0, by: null };
+function cutTape(byId) {
+  tape.frames = []; tape.by = null; tape.from = 0; tape.to = 0;
+  if (!Net.buffer.length) return;
+  const to = Net.buffer[Net.buffer.length - 1].ts;
+  const from = to - KILLCAM_MS;
+  for (const f of Net.buffer) if (f.ts >= from) tape.frames.push(f);
+  if (tape.frames.length < 2) { tape.frames = []; return; }
+  tape.from = Math.max(from, tape.frames[0].ts);
+  tape.to = to;
+  tape.by = byId;
 }
-function startKillcam(byId, byName) {
-  if (!killcamAvailable(byId)) return false;
-  const latest = Net.buffer[Net.buffer.length - 1].ts;
-  const from = Math.max(Net.buffer[0].ts, latest - KILLCAM_MS);
-  if (latest - from < 500) return false;    // not enough tape to be worth it
+function replayAvailable() {
+  return !!settings.killcam && tape.by != null && tape.by !== state.myId &&
+         state.players.has(tape.by) && tape.frames.length > 8 &&
+         tape.to - tape.from > 500;      // not enough tape to be worth it
+}
+function startKillcam() {
+  if (!replayAvailable()) return false;
   killcam.active = true;
-  killcam.t = from;
-  killcam.to = latest;
-  killcam.by = byId;
-  const el = $('killcam');
-  el.classList.remove('hidden');
-  el.querySelector('b').textContent = byName || 'Killer';
+  killcam.t = tape.from;
+  killcam.to = tape.to;
+  killcam.by = tape.by;
   $('hud').classList.add('replay');
+  drawDeathPanel();
   return true;
 }
 function stopKillcam() {
   if (!killcam.active) return;
   killcam.active = false;
   killcam.by = null;
-  $('killcam').classList.add('hidden');
   $('hud').classList.remove('replay');
   // hand the world back to the live clock rather than leaving it mid-replay
   if (Net.buffer.length) netTime = Net.buffer[Net.buffer.length - 1].ts - INTERP_MS;
+  drawDeathPanel();
+}
+
+/* Over the shoulder -- and high enough to actually see over it.
+
+   The old rig sat 2.2m back at eye height plus a hand's width, which put the
+   camera inside the shoulders it was meant to be looking over: the body took
+   the middle of the frame and the sprites floating above the head took what
+   was left. Height is what fixes that. Looking slightly DOWN the aim line
+   puts the player in the lower third and whatever they were shooting at in
+   the middle, which is the part anyone replaying their own death wants to
+   see.
+
+   Raising it also means the camera stops copying the player's pitch. Offset
+   up and to the side, their pitch aims the middle of the screen somewhere
+   over their target's head; aiming AT a point down their sight line keeps
+   that target centred wherever the camera is standing. */
+const SHOULDER = { back: 3.5, up: 1.15, side: 0.85, focus: 16 };
+function shoulderCam(pos, yaw, pitch, focus) {
+  const p = clamp(pitch || 0, -85, 85);
+  const q = new THREE.Euler(p * DEG, yaw * DEG, 0, 'YXZ');
+  const fwd = new THREE.Vector3(0, 0, -1).applyEuler(q);
+  const right = new THREE.Vector3(1, 0, 0).applyEuler(q);
+  const eye = new THREE.Vector3(pos[0], pos[1] + CFG.EYE, pos[2]);
+  const want = eye.clone()
+    .add(fwd.clone().multiplyScalar(-SHOULDER.back))
+    .add(right.multiplyScalar(SHOULDER.side))
+    .add(new THREE.Vector3(0, SHOULDER.up, 0));
+  // the same wall-avoidance the live camera uses, or the replay films the
+  // inside of whatever the killer was standing behind
+  const dir = want.clone().sub(eye), dist = dir.length();
+  if (dist > 0.01) {
+    dir.normalize();
+    const hit = raycast([eye.x, eye.y, eye.z], [dir.x, dir.y, dir.z],
+                        getColliders(), dist + 0.3);
+    if (hit.t !== null) want.copy(eye).add(dir.multiplyScalar(Math.max(0.3, hit.t - 0.25)));
+  }
+  camera.position.copy(want);
+  camera.lookAt(eye.add(fwd.multiplyScalar(focus || SHOULDER.focus)));
+}
+/* Dying while scoped used to leave the replay scoped, because the zoom is
+   lerped in updateCamera() and the death cameras run instead of it, not after
+   it. Nothing else walks the FOV back. */
+function deathFov(dt) {
+  camera.fov = lerp(camera.fov, settings.fov, 1 - Math.pow(0.0009, dt));
+  camera.updateProjectionMatrix();
+  $('scope').style.opacity = 0;
 }
 function updateKillcam(dt) {
   const rp = state.players.get(killcam.by);
   if (!rp) { stopKillcam(); return; }
   killcam.t += dt * 1000;
   if (killcam.t >= killcam.to) { stopKillcam(); return; }
-  applySnapshot(killcam.t, true);
+  applySnapshot(killcam.t, true, tape.frames);
   if (!rp.rpos) { stopKillcam(); return; }
-  // over the killer's shoulder, so you can see both them and what they shot
-  const pitch = clamp(rp.rpitch || 0, -85, 85), yaw = rp.ryaw || 0;
+  deathFov(dt);
+  /* Frame the fight that actually happened rather than a fixed distance down
+     the sight line. The two ends of the shot are the killer and you, so how
+     far apart you were IS how far away the camera should be focusing: aim at
+     16m in a knife fight and the pair of you sit at the bottom of the frame
+     with the sky in the middle. */
+  const victim = state.players.get(state.myId);
+  const focus = (victim && victim.rpos)
+    ? clamp(Math.hypot(victim.rpos[0] - rp.rpos[0], victim.rpos[1] - rp.rpos[1],
+                       victim.rpos[2] - rp.rpos[2]), 4, 40)
+    : SHOULDER.focus;
+  shoulderCam(rp.rpos, rp.ryaw || 0, rp.rpitch || 0, focus);
+  deathBar((killcam.t - tape.from) / Math.max(1, tape.to - tape.from));
+}
+
+/* The spot itself. A fixed camera where you fell, free to look anywhere from
+   there -- deliberately NOT a free cam, because the whole point of the spot
+   is that it is the spot: you watch the fight you just lost carry on over
+   your own body, from the angle that lost it. */
+const deathcam = { active: false, pos: null, by: null, byName: '', until: 0, total: 0 };
+function startDeath(byId, byName, respawnIn) {
+  deathcam.active = true;
+  deathcam.pos = me.pos.slice();
+  deathcam.by = byId;
+  deathcam.byName = byName || 'the void';
+  deathcam.total = respawnIn > 0 ? respawnIn * 1000 : 0;
+  deathcam.until = deathcam.total ? performance.now() + deathcam.total : 0;
+  dcHint = '';
+  // inputs held at the moment of death must not follow you onto the screen --
+  // ADS in particular makes the look sensitivity crawl for no visible reason
+  state.ads = false;
+  firing = false;
+  cutTape(byId);
+  $('hud').classList.add('dead');
+  const started = startKillcam();
+  if (!started) drawDeathPanel();
+  return started;
+}
+function endDeath() {
+  if (!deathcam.active) return;
+  deathcam.active = false;       // before stopKillcam, so its repaint no-ops
+  stopKillcam();
+  deathcam.pos = null;
+  $('hud').classList.remove('dead');
+  $('deathcam').classList.add('hidden');
+  /* The report froze while you were dead so it could be read; you are alive
+     now and the next fight is a different one. */
+  clearCombat();
+}
+function updateDeathcam(dt) {
+  deathFov(dt);
+  const anchor = new THREE.Vector3(deathcam.pos[0], deathcam.pos[1] + 1.5,
+                                   deathcam.pos[2]);
+  const pitch = clamp(me.pitch, -85, 85), yaw = me.yaw;
   const q = new THREE.Euler(pitch * DEG, yaw * DEG, 0, 'YXZ');
   const fwd = new THREE.Vector3(0, 0, -1).applyEuler(q);
-  const eye = new THREE.Vector3(rp.rpos[0], rp.rpos[1] + CFG.EYE, rp.rpos[2]);
-  const want = eye.clone().add(fwd.clone().multiplyScalar(-2.2))
-                 .add(new THREE.Vector3(0, 0.35, 0));
-  // same wall-avoidance the live camera uses, or the replay films the inside
-  // of whatever the killer was standing behind
-  const dir = want.clone().sub(eye), dist = dir.length();
+  const want = anchor.clone().add(fwd.clone().multiplyScalar(-3.0))
+                     .add(new THREE.Vector3(0, 0.55, 0));
+  const dir = want.clone().sub(anchor), dist = dir.length();
   if (dist > 0.01) {
     dir.normalize();
-    const hit = raycast([eye.x, eye.y, eye.z], [dir.x, dir.y, dir.z],
+    const hit = raycast([anchor.x, anchor.y, anchor.z], [dir.x, dir.y, dir.z],
                         getColliders(), dist + 0.3);
-    if (hit.t !== null) want.copy(eye).add(dir.multiplyScalar(Math.max(0.2, hit.t - 0.25)));
+    if (hit.t !== null) want.copy(anchor).add(dir.multiplyScalar(Math.max(0.2, hit.t - 0.25)));
   }
   camera.position.copy(want);
   camera.rotation.set(pitch * DEG, yaw * DEG, 0, 'YXZ');
-  const frac = (killcam.t - (killcam.to - KILLCAM_MS)) / KILLCAM_MS;
-  $('killcam').querySelector('i').style.width = (clamp(frac, 0, 1) * 100) + '%';
+  if (deathcam.total) {
+    const left = Math.max(0, deathcam.until - performance.now());
+    deathBar(1 - left / deathcam.total);
+  } else deathBar(0);
+  drawDeathHint();
+}
+function deathBar(frac) {
+  $('deathcam').querySelector('i').style.width = (clamp(frac, 0, 1) * 100) + '%';
+}
+let dcHint = '';
+function deathHint() {
+  if (killcam.active) return 'Click to skip';
+  const rep = replayAvailable() ? ' · Click to replay' : '';
+  if (deathcam.total) {
+    const left = Math.max(0, deathcam.until - performance.now());
+    return 'Respawn in ' + (Math.ceil(left / 100) / 10).toFixed(1) + 's' + rep;
+  }
+  return 'Waiting for the round' + rep;
+}
+function drawDeathHint() {
+  const h = deathHint();
+  if (h === dcHint) return;              // per frame; only touch the DOM on change
+  dcHint = h;
+  $('deathcam').querySelector('s').textContent = h;
+}
+function drawDeathPanel() {
+  const el = $('deathcam');
+  if (!deathcam.active) { el.classList.add('hidden'); return; }
+  el.classList.remove('hidden');
+  el.classList.toggle('waiting', !killcam.active);
+  el.querySelector('u').textContent = killcam.active ? 'Instant replay' : 'Eliminated by';
+  el.querySelector('b').textContent = deathcam.byName;
+  if (!killcam.active) deathBar(0);
+  dcHint = '';
+  drawDeathHint();
+}
+
+/* =========================================================================
+   Combat report -- who hit you, with what, from how far, and the same ledger
+   for what you landed.
+
+   Nobody wears a name over their head any more, so this is where a name gets
+   attached to a number. Colour carries the direction and only that, on the
+   rule the player models already follow: CYAN is you, RED is them. A cyan row
+   is damage you dealt, a red row is damage you took, and the pair never has
+   to be read to be told apart.
+
+   One row per player per exchange, not one per bullet. A rifle burst is a
+   single event to whoever is on either end of it, and three rows saying 22
+   tell you less than one row saying 66 x3, so a row still on screen absorbs
+   the next hit from the same player and resets its own clock. The number
+   grows while the fight is happening and settles when it stops.
+   ========================================================================= */
+const COMBAT_HOLD = 4500, COMBAT_MERGE = 3200, COMBAT_MAX = 4;
+const combatRows = [];                        // oldest first
+/* "Assault Rifle" is a menu label. A feed row is read in the half second
+   between being shot and shooting back, and has a health bar to fit. */
+const GUN_SHORT = { ar: 'Rifle', shotgun: 'Shotgun', sniper: 'Sniper',
+                    pickaxe: 'Pickaxe', grenade: 'Grenade' };
+function dropCombatRow(r) { if (r && r.el && r.el.parentNode) r.el.remove(); }
+function clearCombat() {
+  for (const r of combatRows) dropCombatRow(r);
+  combatRows.length = 0;
+}
+function combatEntry(kind, id, name, dmg, head, weapon, hpFrac, dist, killed) {
+  if (!(dmg > 0)) return;
+  const now = performance.now();
+  let row = null;
+  for (const r of combatRows) {
+    if (r.kind === kind && r.id === id && now - r.at < COMBAT_MERGE) row = r;
+  }
+  if (!row) {
+    const el = document.createElement('div');
+    el.className = 'cbt ' + (kind === 'out' ? 'out' : 'in');
+    el.innerHTML = '<div class="cbtop"><b></b><em></em></div><s></s>'
+                 + '<div class="chp"><i></i></div>';
+    $('combat').appendChild(el);
+    row = { kind: kind, id: id, el: el, dmg: 0, shots: 0, heads: 0, at: now,
+            hp: 1, killed: false };
+    combatRows.push(row);
+    while (combatRows.length > COMBAT_MAX) dropCombatRow(combatRows.shift());
+  }
+  row.at = now;
+  row.dmg += dmg;
+  row.shots++;
+  if (head) row.heads++;
+  row.name = name || '???';
+  row.weapon = weapon;
+  row.dist = dist;
+  if (hpFrac != null) row.hp = hpFrac;
+  if (killed) row.killed = true;
+  paintCombatRow(row);
+}
+function paintCombatRow(row) {
+  const el = row.el;
+  el.classList.remove('gone');
+  el.classList.toggle('kill', row.killed);
+  el.querySelector('b').textContent = row.name;
+  // A minus sign is health leaving you. Damage you dealt is not YOUR loss, so
+  // it gets the bare number.
+  el.querySelector('em').textContent =
+    (row.kind === 'in' ? '−' : '') + Math.round(row.dmg);
+  const bits = [];
+  if (row.weapon) bits.push(GUN_SHORT[row.weapon] || row.weapon);
+  if (row.shots > 1) bits.push('×' + row.shots);
+  if (row.heads) bits.push('HS');
+  if (row.dist != null) bits.push(Math.round(row.dist) + 'm');
+  const s = el.querySelector('s');
+  s.textContent = bits.join(' · ');
+  if (row.killed) {
+    const mark = document.createElement('i');
+    mark.textContent = (bits.length ? ' · ' : '') + 'Eliminated';
+    s.appendChild(mark);
+  }
+  const fill = el.querySelector('.chp i');
+  const f = clamp(row.hp, 0, 1);
+  fill.style.width = (f * 100) + '%';
+  fill.style.background = f > 0.6 ? 'var(--hp)' : f > 0.3 ? 'var(--mat)' : 'var(--bad)';
+}
+function sweepCombat(now) {
+  /* Frozen while you are dead. The report of the fight that killed you is the
+     one you most want to read, and it must not time out underneath the death
+     screen that exists to show it. */
+  if (deathcam.active) return;
+  for (let i = combatRows.length - 1; i >= 0; i--) {
+    const r = combatRows[i];
+    const age = now - r.at;
+    if (age > COMBAT_HOLD + 400) { dropCombatRow(r); combatRows.splice(i, 1); }
+    else if (age > COMBAT_HOLD) r.el.classList.add('gone');
+  }
 }
 function updateRemoteVisuals(dt) {
   for (const [id, rp] of state.players) {
@@ -4009,6 +4064,10 @@ function updateRemoteVisuals(dt) {
     const cs = crouch ? 0.72 : 1;
     rp.body.scale.y = lerp(rp.body.scale.y, cs, 0.3);
     if (isMe) continue;
+    /* The health bar draws with depth testing off, so it goes over everything
+       in front of it -- and the player the replay is filming is the one whose
+       bar is nearest the lens. Their health is not what you are watching. */
+    rp.bar.visible = !(killcam.active && id === killcam.by);
     const frac = clamp((rp.hp || 0) / CFG.HP_MAX, 0, 1);
     rp.bar.userData.fg.scale.x = 1.46 * frac;
     rp.bar.userData.fg.material.color.setHex(
@@ -4631,7 +4690,18 @@ function handleMsg(m) {
       state.ping = performance.now() - m.c;
       break;
     case 'you':
-      if (m.hp !== undefined) { if (m.hp < state.hp) { Audio_.hurt(); damageDirection(m.from); } state.hp = m.hp; }
+      /* Keyed off the damage, not off the drop in hp. A shot stopped entirely
+         by shield never moves hp, so the old test stayed silent about the
+         person shooting at you -- which is the one thing you needed. */
+      if (m.dmg > 0) {
+        Audio_.hurt();
+        damageDirection(m.from);
+        combatEntry('in', m.by, m.bn, m.dmg, m.head, m.w,
+                    clamp((m.hp || 0) / CFG.HP_MAX, 0, 1),
+                    m.from ? Math.hypot(m.from[0] - me.pos[0], m.from[1] - me.pos[1],
+                                        m.from[2] - me.pos[2]) : null, false);
+      }
+      if (m.hp !== undefined) state.hp = m.hp;
       if (m.shield !== undefined) state.shield = m.shield;
       if (m.mats !== undefined) state.mats = m.mats;
       if (m.ammo !== undefined) { state.ammo = m.ammo; drawAmmo(); }
@@ -4642,6 +4712,17 @@ function handleMsg(m) {
       state.reloadUntil = performance.now() + m.for * 1000;
       state.reloadFor = m.for * 1000;
       Audio_.reloadClick();
+      break;
+    /* The other side of the ledger. It arrives separately from `hit` because
+       it means something different: `hit` is the hitmarker, fired the instant
+       a ray lands on anything at all, while `dealt` is what a player actually
+       lost -- clamped to the health they had, and sent for explosions too,
+       which never cast a ray of yours. */
+    case 'dealt':
+      combatEntry('out', m.id, m.n, m.dmg, m.head, m.w,
+                  clamp((m.hp || 0) / CFG.HP_MAX, 0, 1),
+                  m.pos ? Math.hypot(m.pos[0] - me.pos[0], m.pos[1] - me.pos[1],
+                                     m.pos[2] - me.pos[2]) : null, m.dead);
       break;
     case 'hit':
       showHitmarker(m.head);
@@ -4713,7 +4794,11 @@ function handleMsg(m) {
       if (m.id === state.myId) {
         state.dead = true;
         cancelEdit();
-        if (!startKillcam(m.by, m.kn)) roundMessage('ELIMINATED', 'by ' + m.kn, 2600);
+        // The panel names the killer itself, so the banner is only there for
+        // the case where there is no replay to put one up.
+        if (!startDeath(m.by, m.kn, m.rt || 0)) {
+          roundMessage('ELIMINATED', 'by ' + m.kn, 2600);
+        }
       } else if (m.by === state.myId) {
         roundMessage('ELIMINATED ' + m.vn.toUpperCase(), '', 1400);
       }
@@ -4724,7 +4809,7 @@ function handleMsg(m) {
       const rp = state.players.get(m.id);
       if (rp) { rp.alive = true; rp.rpos = m.pos.slice(); }
       if (m.id === state.myId) {
-        stopKillcam();       // you are alive again; the tape stops
+        endDeath();          // you are alive again; the death screen goes
         me.pos = m.pos.slice();
         me.vel = [0, 0, 0];
         me.yaw = m.yaw; me.pitch = 0;
@@ -4752,14 +4837,14 @@ function handleMsg(m) {
       state.roundNo = m.n;
       state.phase = 'countdown';
       if (m.teams) state.teamScore = m.teams.slice();
-      stopKillcam();
+      endDeath();
       showIntermission(m);
       drawTopbar();
       break;
     case 'phase':
       state.phase = m.phase;
       // a round boundary must not leave a replay running over live play
-      if (m.phase !== 'live') stopKillcam();
+      if (m.phase !== 'live') endDeath();
       if (m.phase === 'live') {
         hideIntermission();
         roundMessage('FIGHT', '', 900);
@@ -4783,6 +4868,7 @@ function handleMsg(m) {
       break;
     case 'matchend': {
       state.phase = 'ended';
+      endDeath();
       showEnd(m);
       break;
     }
@@ -4939,6 +5025,8 @@ function enterMatch(resuming) {
     // the mode decides what you are holding -- 'ar' is not in every loadout
     state.hand = activeLoadout()[0];
   }
+  endDeath();
+  clearCombat();          // endDeath only clears it if you were actually dead
   drawSlots(); drawAmmo(); drawVitals(); drawMats(); drawTopbar(); drawAim();
   const meRp = state.players.get(state.myId);
   if (!resuming) state.spectator = meRp ? meRp.spectator : false;
@@ -5121,7 +5209,15 @@ function onPress(e) {
     return;
   }
   if (e.button === 0) {
-    if (killcam.active) { stopKillcam(); lastClick = 'skipped killcam'; return; }
+    /* The one control the death screen has, and it goes both ways: a click
+       during the replay drops you onto the spot, a click on the spot starts
+       the replay over. Skipping it is never losing it. */
+    if (deathcam.active) {
+      if (killcam.active) { stopKillcam(); lastClick = 'skipped the replay'; }
+      else if (startKillcam()) lastClick = 'replaying';
+      else lastClick = 'watching from where you died';
+      return;
+    }
     if (state.spectator) {
       if (spec.mode === 'follow') { specCycle(1); drawSpecBar(); }
       lastClick = 'spectating';
@@ -5532,11 +5628,17 @@ function frame(now) {
   }
 
   if (state.running) {
-    /* A killcam owns both the camera and the snapshot clock, so the live
+    /* A death camera owns both the camera and the snapshot clock, so the live
        versions of each are skipped rather than run and overwritten -- running
-       both would fight for the camera every frame. */
+       both would fight for the camera every frame. The replay owns the clock
+       as well, which is why the spot cam is the one that still samples live:
+       it is watching the match go on without you. */
+    if (deathcam.active && (!state.dead || state.spectator)) endDeath();
     if (killcam.active) {
       updateKillcam(dt);
+    } else if (deathcam.active) {
+      updateDeathcam(dt);
+      sampleRemote(dt);
     } else if (state.spectator) {
       updateSpectate(dt);
       sampleRemote(dt);
@@ -5550,6 +5652,7 @@ function frame(now) {
     updateRemoteVisuals(dt);
     updateFx(dt);
     drawCrosshair();
+    sweepCombat(now);
 
     if (state.reloading) {
       const left = state.reloadUntil - performance.now();
@@ -5652,7 +5755,9 @@ function bindToggle(id, key, onChange) {
 }
 bindToggle('opt-turbo', 'turbo', (on) => { if (!on) firing = false; });
 bindToggle('opt-edithold', 'editHold', () => { if (state.editing) cancelEdit(); });
-bindToggle('opt-killcam', 'killcam', (on) => { if (!on) stopKillcam(); });
+// Turning it off mid-replay drops you onto the death spot rather than back
+// into a corpse's eye view -- the spot cam is not the thing being switched.
+bindToggle('opt-killcam', 'killcam', (on) => { if (!on) { stopKillcam(); drawDeathPanel(); } });
 bindToggle('opt-fpv', 'fpv');
 drawLifetime();        // the menu shows your record before you connect
 touchSetup();          // no-op unless the device actually reports touch

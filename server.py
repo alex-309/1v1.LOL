@@ -1782,7 +1782,7 @@ class Game(object):
             self.send_to(other["id"], {"t": "correct", "pos": other["pos"]})
 
     # -- combat -----------------------------------------------------------
-    def apply_damage(self, target, amount, by_pid, head=False):
+    def apply_damage(self, target, amount, by_pid, head=False, weapon=None):
         if not target["alive"]:
             return
         if time.time() < target["protect_until"]:
@@ -1814,9 +1814,28 @@ class Game(object):
             target["hp"] -= amount
         target["last_dmg_from"] = by_pid
         target["last_dmg_at"] = time.time()
+        src = self.players.get(by_pid)
         self.send_to(target["id"], {"t": "you", "hp": target["hp"],
                                     "shield": target["shield"],
-                                    "from": self.players[by_pid]["pos"] if by_pid in self.players else None})
+                                    "from": src["pos"] if src else None,
+                                    "by": by_pid if src else None,
+                                    "bn": src["name"] if src else "the void",
+                                    "dmg": round(dealt), "head": head,
+                                    "w": weapon})
+        # The combat report is a two-sided ledger: one landed shot is one
+        # event, and both ends of it want the same row. The victim learns it
+        # from `you`; the shooter learns it here, credited with what actually
+        # landed rather than what was rolled. Routing it through apply_damage
+        # rather than the hitscan path is what gets grenades onto the feed --
+        # an explosion never sends a `hit`.
+        if src and src is not target and dealt > 0:
+            self.send_to(by_pid, {"t": "dealt", "id": target["id"],
+                                  "n": target["name"], "dmg": round(dealt),
+                                  "head": head, "w": weapon,
+                                  "pos": target["pos"],
+                                  "hp": max(0.0, round(target["hp"])),
+                                  "sh": round(target["shield"]),
+                                  "dead": target["hp"] <= 0})
         if target["hp"] <= 0:
             self.kill_player(target, by_pid)
 
@@ -1828,9 +1847,14 @@ class Game(object):
         if killer and killer is not target:
             killer["kills"] += 1
         self._last_round_winner = by_pid if (killer and killer is not target) else None
+        # How long the corpse waits, so the client can run a respawn clock
+        # rather than guessing. Round-based modes respawn on the round, not on
+        # a timer, and say so with 0.
+        rt = (0.0 if (self.mode == "duel" or is_team(self.mode))
+              else CONFIG["RESPAWN_TIME"])
         self.broadcast({"t": "die", "id": target["id"], "by": by_pid,
                         "kn": killer["name"] if killer else "the void",
-                        "vn": target["name"]})
+                        "vn": target["name"], "rt": rt})
         self.broadcast({"t": "score", "s": {str(p["id"]): p["kills"]
                                             for p in self.players.values()}})
         if self.mode == "duel":
@@ -2284,7 +2308,7 @@ class Game(object):
                     landed = True
                     head = box.kind == "head"
                     dmg = w["dmg"] * (w["head_mult"] if head else 1.0)
-                    self.apply_damage(target, dmg, p["id"], head)
+                    self.apply_damage(target, dmg, p["id"], head, weapon)
                     self.send_to(p["id"], {"t": "hit", "target": box.ref,
                                            "dmg": round(dmg), "head": head,
                                            "pos": end})
@@ -2341,7 +2365,7 @@ class Game(object):
         if box.kind in ("body", "head"):
             target = self.players.get(box.ref)
             if target and target["alive"]:
-                self.apply_damage(target, w["dmg"], p["id"], box.kind == "head")
+                self.apply_damage(target, w["dmg"], p["id"], box.kind == "head", "pickaxe")
                 self.send_to(p["id"], {"t": "hit", "target": box.ref,
                                        "dmg": round(w["dmg"]), "head": False, "pos": end})
         elif box.kind in ("dummy", "dummyhead"):
@@ -2401,7 +2425,7 @@ class Game(object):
             t, _ = raycast(g["pos"], dirv, boxes, max(d - 0.4, 0.01))
             if t is not None:
                 continue
-            self.apply_damage(p, w["dmg"] * (1.0 - d / r), g["owner"])
+            self.apply_damage(p, w["dmg"] * (1.0 - d / r), g["owner"], False, "grenade")
         for key in list(self.pieces.keys()):
             pc = self.pieces[key]
             c = [pc["cx"] * CELL + CELL / 2, pc["cy"] * CELL + CELL / 2,
