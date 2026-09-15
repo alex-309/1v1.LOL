@@ -1207,6 +1207,65 @@ class Client(object):
 
 
 # ---------------------------------------------------------------------------
+# Join rate limiting
+#
+# Every click of "Connect & Play" opens a socket and says hello, and the old
+# socket is not closed first -- so a held-down button is an unbounded supply of
+# connections and player records. These numbers are deliberately loose enough
+# that a human reconnecting after a bad drop never notices them.
+# ---------------------------------------------------------------------------
+JOIN_BURST = 5           # new players one address may create ...
+JOIN_WINDOW = 10.0       # ... within this many seconds
+MAX_PLAYERS = 16         # hard ceiling on a single world, bots included
+LIMITER_IDLE = 300.0     # forget an address after this long
+
+
+class JoinRefused(Exception):
+    """A connection that may not become a player. Carries the reason shown."""
+
+
+class JoinLimiter(object):
+    """Sliding window of recent joins, per address.
+
+    Deliberately NOT applied to rejoins -- see Game.attach(). A rejoin presents
+    a token for a slot that already exists, and refusing those would turn one
+    dropped connection into a player locked out of their own match.
+    """
+
+    def __init__(self, burst=JOIN_BURST, window=JOIN_WINDOW):
+        self.burst = burst
+        self.window = window
+        self.hits = {}
+
+    def allow(self, addr, now=None):
+        now = time.time() if now is None else now
+        q = self.hits.get(addr)
+        if q is None:
+            q = self.hits[addr] = []
+        cutoff = now - self.window
+        while q and q[0] < cutoff:
+            q.pop(0)
+        if len(q) >= self.burst:
+            return False
+        q.append(now)
+        self._sweep(now)
+        return True
+
+    def _sweep(self, now):
+        """Forget quiet addresses. Without this the table is a slow leak that
+        a stream of distinct addresses turns into a fast one."""
+        if len(self.hits) < 256:
+            return
+        dead = [a for a, q in self.hits.items()
+                if not q or now - q[-1] > LIMITER_IDLE]
+        for a in dead:
+            del self.hits[a]
+
+
+JOINS = JoinLimiter()
+
+
+# ---------------------------------------------------------------------------
 # Game
 # ---------------------------------------------------------------------------
 class Game(object):
@@ -2144,16 +2203,29 @@ class Game(object):
     # copy of this that drifts turns every dropped connection into a dead
     # session instead of a two-second blip. That is exactly what a duplicated
     # copy of it did.
-    def attach(self, make_client, name, token, where=""):
+    def attach(self, make_client, name, token, where="", addr=None):
         """Put a new connection into the game. Returns (player, client, rejoined).
 
         `make_client` is handed the player id and returns the transport's own
         client object, so each transport keeps its own sender without this
         method needing to know which one it is talking to.
+
+        Raises JoinRefused if the address is joining too fast or the world is
+        full. Both transports turn that into a message and a closed socket.
         """
         p = self.reclaim(token)
         rejoined = p is not None
         if not rejoined:
+            # Limits apply to NEW players only. Someone coming back holds a
+            # token for a slot that already exists and has already been paid
+            # for -- and on Vercel a whole lobby reconnects at once every time
+            # the function hits its max duration, which must not read as an
+            # attack.
+            if addr is not None and not JOINS.allow(addr):
+                raise JoinRefused(
+                    "Too many join attempts. Wait a few seconds and try again.")
+            if len(self.players) >= MAX_PLAYERS:
+                raise JoinRefused("Server is full (%d players)." % MAX_PLAYERS)
             p = self.new_player(name)
         pid = p["id"]
         client = make_client(pid)
@@ -3138,9 +3210,16 @@ class Handler(socketserver.BaseRequestHandler):
                         name = str(msg.get("name", "Player"))[:16].strip() or "Player"
                         # A token means "I was already here" -- see reclaim().
                         addr = self.client_address[0]
-                        p, client, _ = GAME.attach(
-                            lambda i: Client(sock, self.client_address, i),
-                            name, msg.get("token"), " from %s" % addr)
+                        try:
+                            p, client, _ = GAME.attach(
+                                lambda i: Client(sock, self.client_address, i),
+                                name, msg.get("token"), " from %s" % addr,
+                                addr=addr)
+                        except JoinRefused as e:
+                            sock.sendall(ws_frame(json.dumps(
+                                {"t": "refused", "m": str(e)})))
+                            print("  ! join refused from %s -- %s" % (addr, e))
+                            return
                         pid = p["id"]
                         continue
                     try:

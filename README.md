@@ -461,6 +461,22 @@ The map is the `ARENA` list right below it — boxes of
 `[centreX, centreY, centreZ, sizeX, sizeY, sizeZ, tag]`. The server uses it for
 collision and sends it to the browser to build the meshes from.
 
+**Join limits** are the exception — they sit beside `JoinLimiter` rather than in
+`CONFIG`, because they are the server protecting itself and no client needs to
+know them:
+
+| Constant | Default | Meaning |
+| --- | --- | --- |
+| `JOIN_BURST` | 5 | new players one address may create ... |
+| `JOIN_WINDOW` | 10.0 | ... within this many seconds |
+| `MAX_PLAYERS` | 16 | hard ceiling on one world, bots included |
+
+A refused player is told why on the menu. **Rejoins are deliberately exempt**: a
+reconnect carries a token for a slot that already exists, and rate-limiting
+those would turn one dropped connection — or, on Vercel, a whole lobby dropping
+together when the function hits its max duration — into everybody locked out of
+their own match.
+
 ---
 
 ## Troubleshooting

@@ -196,15 +196,26 @@ async def game_socket(ws: WebSocket):
             if msg is None or msg.get("t") != "hello":
                 continue
             name = str(msg.get("name", "Player"))[:16].strip() or "Player"
+            refused = None
             with GAME.lock:
                 # Deliberately server.py's handshake rather than a copy of it.
                 # The welcome it builds carries the rejoin token, and the client
                 # only retries a dropped socket while it holds one -- which
                 # matters far more here than on a LAN, because Vercel closes
                 # every connection when the function hits its max duration.
-                p, client, _ = GAME.attach(lambda i: SocketClient(i),
-                                           name, msg.get("token"))
-                pid = p["id"]
+                try:
+                    p, client, _ = GAME.attach(lambda i: SocketClient(i), name,
+                                               msg.get("token"), addr=_peer(ws))
+                    pid = p["id"]
+                except bf.JoinRefused as e:
+                    refused = str(e)
+            # Answer outside the lock. This is a single event loop, so a task
+            # suspended at an await while holding GAME.lock would freeze every
+            # other connection and the tick along with them.
+            if refused:
+                await ws.send_text(json.dumps({"t": "refused", "m": refused}))
+                await ws.close()
+                return
             _start_tick()
 
         # -- steady state: reader and writer race; either ending ends both ----
@@ -229,6 +240,19 @@ async def game_socket(ws: WebSocket):
         if client:
             client.kill()
         _on_disconnect()
+
+
+def _peer(ws):
+    """The address the rate limiter counts against.
+
+    Vercel terminates the connection at its edge, so ws.client is the proxy --
+    every player on the deployment would otherwise share one bucket and lock
+    each other out. The first X-Forwarded-For entry is the original caller.
+    """
+    xff = ws.headers.get("x-forwarded-for")
+    if xff:
+        return xff.split(",")[0].strip()
+    return ws.client.host if ws.client else "?"
 
 
 async def _recv_json(ws):

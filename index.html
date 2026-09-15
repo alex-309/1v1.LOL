@@ -1463,6 +1463,7 @@ const Audio_ = {
 const Net = {
   ws: null, url: '', connected: false, lastPing: 0, tOffset: 0,
   token: null, tries: 0, _timer: null,   // rejoin credentials + backoff
+  refused: false,                   // server said no -- retrying would only spam it
   buffer: [],                       // snapshot buffer for interpolation
   connect(onOpen) {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -1485,10 +1486,13 @@ const Net = {
          correct move here is to go back and ask for them -- showing the
          "no connection" wall immediately was throwing away a match over two
          seconds of bad wifi. Only give up once the grace has really gone. */
+      if (this.refused) return;        // a considered "no", not a lost packet
       if (this.token && this.tries < RECONNECT_TRIES) this.retry();
       else if (state.running) showConnFail();
     };
-    ws.onerror = () => { if (!this.connected && !this.token) showConnFail(); };
+    ws.onerror = () => {
+      if (!this.connected && !this.token && !this.refused) showConnFail();
+    };
   },
   /* Backoff, but a fast first try: most drops are a single lost second and
      waiting politely for five of them is its own failure. */
@@ -3575,6 +3579,202 @@ function makeHealthBar() {
   g.userData.fg = fg;
   return g;
 }
+// Blocky game-style mannequin. Returns a THREE.Group of named meshes.
+// (Authored in Claude Design as mannequin.js -- geometry kept verbatim; the
+//  only change is using the global THREE instead of an ES-module import.)
+function buildMannequin(palette) {
+  const body = new THREE.MeshStandardMaterial({
+    name: palette.name + '_body', color: palette.body, roughness: 0.55, metalness: 0.1
+  });
+  const dark = new THREE.MeshStandardMaterial({
+    name: palette.name + '_extremity', color: palette.dark, roughness: 0.65, metalness: 0.1
+  });
+  const joint = new THREE.MeshStandardMaterial({
+    name: palette.name + '_joint', color: palette.joint, roughness: 0.4, metalness: 0.15
+  });
+
+  const g = new THREE.Group();
+  g.name = 'mannequin_' + palette.name;
+
+  const add = (name, geo, mat, pos, rot) => {
+    const m = new THREE.Mesh(geo, mat);
+    m.name = name;
+    m.position.set(pos[0], pos[1], pos[2]);
+    if (rot) m.rotation.set(rot[0], rot[1], rot[2]);
+    m.castShadow = true;
+    m.receiveShadow = true;
+    g.add(m);
+    return m;
+  };
+
+  const box = (w, h, d) => new THREE.BoxGeometry(w, h, d);
+  const cyl = (rt, rb, h) => new THREE.CylinderGeometry(rt, rb, h, 32);
+  const ball = r => new THREE.SphereGeometry(r, 32, 20);
+
+  // ---- torso ----
+  add('chest', box(0.50, 0.32, 0.27), body, [0, 1.42, 0]);
+  add('chest_bevel_top', box(0.44, 0.05, 0.22), body, [0, 1.60, 0]);
+  add('abdomen', box(0.38, 0.16, 0.23), body, [0, 1.20, 0]);
+  add('pelvis', box(0.44, 0.17, 0.25), body, [0, 1.05, 0]);
+
+  // ---- head ----
+  add('neck', cyl(0.075, 0.085, 0.12), dark, [0, 1.655, 0]);
+  add('head', box(0.25, 0.30, 0.27), body, [0, 1.86, 0.005]);
+  add('head_crown', box(0.20, 0.04, 0.22), body, [0, 2.02, 0.005]);
+
+  // ---- arms (mirrored) ----
+  for (const s of [-1, 1]) {
+    const side = s < 0 ? 'L' : 'R';
+    const tilt = s * 0.34; // A-pose so the arms clear the torso
+    add('shoulder_' + side, ball(0.105), joint, [s * 0.275, 1.51, 0]);
+
+    const shX = s * 0.275, shY = 1.51;
+    const upperLen = 0.38, foreLen = 0.34;
+    const ex = shX + Math.sin(tilt) * upperLen, ey = shY - Math.cos(tilt) * upperLen;
+    add('upper_arm_' + side, cyl(0.085, 0.075, upperLen), body,
+      [(shX + ex) / 2, (shY + ey) / 2, 0], [0, 0, tilt]);
+
+    add('elbow_' + side, ball(0.078), joint, [ex, ey, 0]);
+    const wx = ex + Math.sin(tilt) * foreLen, wy = ey - Math.cos(tilt) * foreLen;
+    add('forearm_' + side, cyl(0.072, 0.062, foreLen), body,
+      [(ex + wx) / 2, (ey + wy) / 2, 0], [0, 0, tilt]);
+
+    add('wrist_' + side, ball(0.06), joint, [wx, wy, 0]);
+    add('hand_' + side, box(0.10, 0.20, 0.12), dark, [wx + Math.sin(tilt) * 0.115, wy - 0.11, 0.005], [0, 0, tilt]);
+    add('thumb_' + side, box(0.045, 0.09, 0.05), dark,
+      [wx + Math.sin(tilt) * 0.10 - s * 0.065, wy - 0.07, 0.03], [0, 0, tilt]);
+  }
+
+  // ---- legs (mirrored) ----
+  for (const s of [-1, 1]) {
+    const side = s < 0 ? 'L' : 'R';
+    const x = s * 0.125;
+    add('hip_' + side, ball(0.11), joint, [x, 0.99, 0]);
+    add('thigh_' + side, cyl(0.105, 0.09, 0.44), body, [x, 0.765, 0]);
+    add('knee_' + side, ball(0.095), joint, [x, 0.545, 0]);
+    add('shin_' + side, cyl(0.09, 0.072, 0.44), body, [x, 0.325, 0]);
+    add('ankle_' + side, ball(0.068), joint, [x, 0.11, 0]);
+    add('foot_' + side, box(0.155, 0.10, 0.30), dark, [x, 0.055, 0.055]);
+    add('toe_' + side, box(0.14, 0.06, 0.07), dark, [x, 0.035, 0.235]);
+  }
+
+  return g;
+}
+
+const PALETTES = {
+  blue: { name: 'blue', body: 0x2f6fd0, dark: 0x1d4a94, joint: 0x2559ad },
+  red: { name: 'red', body: 0xcf3b34, dark: 0x8f231f, joint: 0xac2b26 }
+};
+
+/* ------------------------------------------------------------------------
+   Rigging the mannequin for gameplay.
+
+   buildMannequin() returns a FLAT list of named meshes -- perfect for a
+   turntable preview, but limbs can't swing without a hierarchy. So the parts
+   are re-parented into pivot groups placed at the real joints (shoulder, hip,
+   neck) and each child is offset by the pivot, which preserves its exact
+   position while making rotation possible.
+   ------------------------------------------------------------------------ */
+function rigMannequin(flat) {
+  const rig = new THREE.Group();
+  const pivot = (name, px, py, pz, parts) => {
+    const p = new THREE.Group();
+    p.name = name;
+    p.position.set(px, py, pz);
+    for (const n of parts) {
+      const m = flat.getObjectByName(n);
+      if (!m) continue;
+      m.position.set(m.position.x - px, m.position.y - py, m.position.z - pz);
+      p.add(m);
+    }
+    rig.add(p);
+    return p;
+  };
+  // joint centres taken from mannequin.js
+  pivot('pivot_head', 0, 1.60, 0, ['neck', 'head', 'head_crown']);
+  for (const s of [['L', -1], ['R', 1]]) {
+    pivot('pivot_arm' + s[0], s[1] * 0.275, 1.51, 0,
+      ['shoulder_', 'upper_arm_', 'elbow_', 'forearm_', 'wrist_', 'hand_', 'thumb_']
+        .map(n => n + s[0]));
+    pivot('pivot_leg' + s[0], s[1] * 0.125, 0.99, 0,
+      ['hip_', 'thigh_', 'knee_', 'shin_', 'ankle_', 'foot_', 'toe_'].map(n => n + s[0]));
+  }
+  const torso = new THREE.Group();
+  torso.name = 'pivot_torso';
+  for (const m of flat.children.slice()) torso.add(m);   // whatever is left
+  rig.add(torso);
+  return rig;
+}
+
+/* One rigged template per team, cloned per player. Object3D.clone() shares
+   geometry and materials, so N characters cost one set of buffers. */
+const DUMMY_PALETTE = { name: 'dummy', body: 0x9aa6b8, dark: 0x6b7688, joint: 0x808c9e };
+const _mannequins = {};
+function mannequinTemplate(team) {
+  if (_mannequins[team]) return _mannequins[team];
+  const pal = team === 'dummy' ? DUMMY_PALETTE : PALETTES[team];
+  const rig = rigMannequin(buildMannequin(pal));
+
+  // A weapon so you can see what you're holding. Parented to the right arm's
+  // pivot, long axis along -Y, so it follows the arm when it swings forward.
+  const gun = new THREE.Group();
+  gun.name = 'gun';
+  const gunMat = new THREE.MeshStandardMaterial({ color: 0x2b3038, roughness: 0.5, metalness: 0.35 });
+  const barrel = new THREE.Mesh(new THREE.BoxGeometry(0.075, 0.52, 0.085), gunMat);
+  barrel.position.set(0, -0.20, 0);
+  const grip = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.16, 0.10), gunMat);
+  grip.position.set(0, 0.03, 0.02);
+  for (const m of [barrel, grip]) { m.castShadow = true; gun.add(m); }
+  gun.position.set(0.28, -0.80, 0.02);
+  rig.getObjectByName('pivot_armR').add(gun);
+
+  /* Normalise to the collision box: the model is authored ~2.04m tall but the
+     player hitbox is CFG.P_H. Scaling from the measured bounds (rather than a
+     hardcoded number) keeps the visual and the hitbox aligned even if the
+     source model changes -- otherwise you'd be shooting at a head that isn't
+     where the server thinks it is. */
+  // The mannequin is authored facing +Z (toes at z = +0.235); the game's
+  // forward is -Z, so turn the rig around to match.
+  rig.rotation.y = Math.PI;
+  rig.updateMatrixWorld(true);
+  const box = new THREE.Box3().setFromObject(rig);
+  const k = CFG.P_H / Math.max(0.001, box.max.y - box.min.y);
+  rig.scale.setScalar(k);
+  rig.position.y = -box.min.y * k;
+  _mannequins[team] = rig;
+  return rig;
+}
+
+function makeBody(team) {
+  // Outer group is what the crouch animation scales on Y, so it never fights
+  // the uniform height-normalisation scale on the rig inside it.
+  const body = new THREE.Group();
+  const rig = mannequinTemplate(team).clone(true);
+  body.add(rig);
+  const get = (n) => rig.getObjectByName(n);
+  body.userData = {
+    head: get('pivot_head'), torso: get('pivot_torso'),
+    armL: get('pivot_armL'), armR: get('pivot_armR'),
+    legL: get('pivot_legL'), legR: get('pivot_legR'),
+    gun: get('gun'),
+  };
+  return body;
+}
+
+/* Swap a player's body colour when their side changes -- teams are assigned at
+   match start, after everyone's model already exists. */
+function reskinBody(rp) {
+  if (!rp || !rp.grp || !rp.body) return;
+  const friendly = sameTeam(rp);
+  const nb = makeBody(friendly ? 'blue' : 'red');
+  rp.grp.remove(rp.body);
+  disposeMesh(rp.body);
+  rp.grp.add(nb);
+  rp.body = nb;
+}
+function reskinAllBodies() {
+  for (const rp of state.players.values()) reskinBody(rp);
+}
 /* Team colour is identity, not decoration: YOU are always blue, every
    opponent -- human or bot -- is always red. Assigning by player id (as this
    did before) meant you could show up red and your enemy blue, which reads
@@ -4901,6 +5101,15 @@ function handleMsg(m) {
     case 'err':
       $('lobbyerr').textContent = m.m;
       break;
+    /* The server declined the connection -- joining too fast, or a full world.
+       Say so on the menu the player is still looking at. The "NO CONNECTION"
+       wall would be a lie here: the server answered, and it answered clearly. */
+    case 'refused':
+      Net.refused = true;
+      $('menuerr').textContent = m.m;
+      enableJoin(true);
+      try { Net.ws && Net.ws.close(); } catch (e) {}
+      break;
   }
 }
 function drawAim() {
@@ -5816,12 +6025,30 @@ $('btnlobby').onclick = () => { pause(false); Net.send({ t: 'tolobby' }); };
 $('btnendlobby').onclick = () => Net.send({ t: 'tolobby' });
 $('btnrematch').onclick = () => Net.send({ t: 'start', mode: state.mode });
 
+/* Every click opens a NEW socket and says hello, and the old one is not closed
+   first -- so a held-down button is an unbounded supply of connections and
+   player records. The server refuses them too (see JoinLimiter), but the fix
+   a player should actually experience is the button simply not doing that. */
+function enableJoin(on) {
+  const b = $('btnplay');
+  b.disabled = !on;
+  b.textContent = on ? 'Connect & Play' : 'Connecting…';
+}
 $('btnplay').onclick = () => {
+  if ($('btnplay').disabled) return;
   const name = ($('pname').value || 'Player').trim().slice(0, 16) || 'Player';
   settings.name = name;
   saveSettings();
   Audio_.init();
+  Net.refused = false;
+  enableJoin(false);
   $('menuerr').textContent = 'Connecting…';
+  /* Re-arm if the socket never comes up, so a failed attempt does not leave
+     the player staring at a dead button with no way to try again. */
+  clearTimeout(Net._joinTimer);
+  Net._joinTimer = setTimeout(() => {
+    if (!Net.connected) { enableJoin(true); $('menuerr').textContent = ''; }
+  }, 6000);
   Net.connect(() => {
     $('menuerr').textContent = '';
     Net.send({ t: 'hello', name: name });
