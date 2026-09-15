@@ -138,14 +138,25 @@ no code changes at all.
 | `W A S D` | Move |
 | `Space` | Jump |
 | `Shift` | Crouch |
-| `1` – `5` | Pickaxe · Rifle · Shotgun · Sniper · Grenade |
+| `1` – `5` | Weapon slots, in the order the current mode hands them out |
+| `G` | Quick-draw the pickaxe |
 | `Z` `X` `C` `V` | Wall · Ramp · Floor · Cone |
 | `F` | Edit a piece you built — wall, floor, ramp or cone (press again on an edited piece to reset it) |
-| `R` | Reload · `G` throw grenade |
+| `R` | Reload |
+| `T` | Rotate the ramp or cone you are holding |
 | Left mouse | Fire, or place a build piece (hold to turbo-build) |
 | Right mouse | Aim down sights |
 | `Tab` | Scoreboard · `Enter` chat · `Esc` pause |
 | Mouse wheel | Cycle weapons |
+
+Three switches live in the pause menu next to the binds, because they are
+preference rather than balance:
+
+| Option | Default | What it does |
+|---|---|---|
+| **Turbo build** | on | Hold left mouse to keep placing. Off means one click, one piece. |
+| **Edit on release** | off | Hold the edit key, drag, let go to apply — one motion instead of three. Off keeps the press-to-enter / press-to-reset toggle. |
+| **Killcam** | on | On death, replay the last 2.6s from your killer's view. Click to skip. |
 
 Every key is rebindable in the pause menu (`Esc`), and there are **three
 independent presets** — say one for a mouse, one for a trackpad, one for whoever
@@ -197,6 +208,33 @@ cone under you puts you on top of it — never underneath, and never through the
 map. A wall placed on you shoves you along the wall's own facing, to whichever
 side you were already heading; it never throws you sideways.
 
+**Rotation.** `T` turns a held ramp or cone by a quarter turn, so you can lay a
+ramp across your path instead of along it — the one orientation you cannot get
+by turning your own body, because turning your body also turns where the piece
+lands. Walls and floors are deliberately not rotatable: a wall's facing is
+*which edge of the box it occupies*, and a floor has no facing at all.
+
+**Your own builds do not block your next build.** The line-of-sight rule exists
+to stop you building through an *enemy's* wall, and only that. Counting your own
+pieces made going vertical awkward, since inside your own box every cell worth
+filling is behind something you just placed.
+
+**The pickaxe farms.** Swing it at the ground, a crate, anything in the arena,
+and you get 16 materials — more than a piece costs. Materials still regenerate,
+but regen alone makes them a function of time and nothing else, so there is
+never a reason to leave your box.
+
+**Loadouts are per mode.** A duel is a gunfight — rifle, shotgun, sniper on
+`1` `2` `3`, and that is all. No pickaxe to chip a wall down with and no
+grenade to throw into a box fight. Deathmatch, Build and the Aim Trainer hand
+out the full five. The hotbar, the number keys and the mouse wheel all follow
+whatever the mode actually gave you, so there are never gaps on the bar where a
+weapon you don't have used to be.
+
+**Grenades** are thrown with left mouse while the grenade is in hand, like any
+other weapon — they are a server-owned physics object rather than a hitscan,
+so they arc, bounce, and go off on a 3s fuse whether or not they hit anything.
+
 **The pickaxe** does 20 to anything it reaches — players, bots, dummies and
 builds alike — at a swing every 0.7s. It is the free option when you are out of
 ammo and the way to take a wall down without spending bullets; breaking a piece
@@ -242,18 +280,40 @@ platform running alongside.
 
 **Only real edits go through.** Your picked tiles have to form a solid
 rectangle, or one of the four wall corner cuts above — between them that is
-every edit this genre actually has. A scattered diagonal pick is refused and drops back to an empty selection rather than
-cutting a shape the game doesn't have. The prompt under the crosshair names what
+every edit this genre actually has. A scattered diagonal pick is refused and
+drops back to an empty selection rather than cutting a shape the game
+doesn't have. The prompt under the crosshair names what
 you are about to make. You also cannot edit a piece away entirely; that's what
 the pickaxe is for.
+
+**Shots are lag-compensated.** You do not see the present: remote players are
+drawn 100ms behind the newest snapshot, and that snapshot already cost a network
+trip. So every shot carries the server timestamp the client was *rendering* when
+you clicked, and the server rewinds everyone else to that instant before casting
+the ray. Without it a strafing target feels bulletproof, because you really are
+shooting behind them. The rewind is clamped to 260ms — enough for the
+interpolation delay plus a round trip on a bad connection, and no more, since an
+unbounded rewind is an invitation to ask to shoot at where someone stood a minute
+ago. The shooter is never rewound; they see themselves in the present.
+
+**Killcam.** Die and you watch your last 2.6 seconds from over your killer's
+shoulder. It costs nothing on the wire: the snapshot buffer already holds every
+player's position, yaw and pitch, so the replay is the same interpolation run
+backwards with the camera parented somewhere else. Click to skip, or turn it off.
 
 ---
 
 ## Modes
 
-- **Duel** — first to 5. Every kill wipes all builds, fully heals both players
-  and respawns them at opposite ends. Needs exactly two participants; add a bot
-  if your friend isn't around.
+- **Duel** — first to 5, on the **box-fight arena**: 48 wide, walled 12 high,
+  with a raised centre platform worth taking and almost nothing else. The open
+  map is a deathmatch map — two duellists spend the first twenty seconds walking
+  toward each other — so a duel gets the opposite: close enough that the fight
+  starts at once, and walled, so the only way out of a bad position is up. The
+  cover in a build fight is the cover you build. Rifle, shotgun and sniper only.
+  Every kill wipes all builds, fully heals both players and respawns them at
+  opposite ends. Needs exactly two participants; add a bot if your friend isn't
+  around.
 - **Deathmatch** — respawn after 3 seconds, builds persist, first to 15. Any
   number of players and bots.
 - **Build** — sandbox. Infinite materials, no incoming damage, dummies to break.

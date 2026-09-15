@@ -65,6 +65,15 @@ CONFIG = {
     "MAT_START": 500,
     "MAT_REGEN": 12.0,       # per second
     "MAT_REGEN_DELAY": 3.0,  # seconds after your last placement
+    "LAG_COMP_MS": 260,      # furthest a shot may rewind other players. Covers
+                             # the client's 100ms interpolation delay plus a
+                             # round trip on a bad connection, and no more --
+                             # an unbounded rewind is an invitation to ask to
+                             # shoot at where someone stood a minute ago.
+    "MAT_PER_SWING": 16,     # pickaxe into the arena -- farming, not regen.
+                             # Deliberately more than a piece costs, so going
+                             # and hitting a crate is a real opening move and
+                             # not a worse version of standing still.
     "PICKAXE_REFUND": 5,
     # Build reach is measured in CELLS, not metres. You reach the cell you are
     # standing in plus two more in every direction, trimmed to a circle -- so
@@ -160,7 +169,16 @@ CONFIG = {
             "fuse": 3.0, "radius": 6.0, "throw_speed": 22.0,
         },
     },
+    # The master list. Order here is the wire order -- a player's held weapon
+    # travels as an index into THIS list, so never reorder it per mode.
     "LOADOUT": ["pickaxe", "ar", "shotgun", "sniper", "grenade"],
+    # What each mode actually hands you. A 1v1 duel is a gunfight: three guns,
+    # no pickaxe and no grenade, so nobody wins a duel by chipping a wall down
+    # with a melee swing or by tossing an explosive into a box fight. Any mode
+    # missing from here gets the full LOADOUT.
+    "MODE_LOADOUT": {
+        "duel": ["ar", "shotgun", "sniper"],
+    },
     "BUILD_PIECES": ["wall", "ramp", "floor", "roof"],
 
     "GRENADE_GRAVITY": 26.0,
@@ -186,7 +204,7 @@ CONFIG = {
 # so it lives here once as data. Each box is [cx, cy, cz, sx, sy, sz, tag]
 # where the position is the CENTER and s* are full extents.
 # ---------------------------------------------------------------------------
-ARENA = [
+OPEN_ARENA = [
     [0, -1.0, 0, 80, 2.0, 80, "ground"],
     # border lip
     [0, 0.4, -40.5, 81, 1.0, 1.0, "lip"],
@@ -203,7 +221,7 @@ ARENA = [
     [24, 1.0, -6, 4, 2.0, 10, "crate"],
 ]
 
-SPAWNS = [
+OPEN_SPAWNS = [
     [-32.0, 0.5, -32.0, 45.0],
     [32.0, 0.5, 32.0, 225.0],
     [-32.0, 0.5, 32.0, 135.0],
@@ -211,6 +229,61 @@ SPAWNS = [
     [0.0, 0.5, -34.0, 0.0],
     [0.0, 0.5, 34.0, 180.0],
 ]
+
+# ---------------------------------------------------------------------------
+# BOX FIGHT -- the 1v1 arena.
+#
+# The open arena is a deathmatch map: 80 wide, cover scattered around, and two
+# duellists spend the first twenty seconds walking toward each other. A duel
+# wants the opposite -- close enough that the fight starts immediately, and
+# WALLED, so the only way out of a bad position is up. Everything here follows
+# from that:
+#
+#   48 wide, on the 4-unit build grid, so builds line up with the floor
+#   perimeter walls 12 high -- higher than anyone can ramp in one go, so the
+#     fight stays inside the box instead of leaking onto the skybox
+#   a raised centre platform, which is the thing worth taking: high ground you
+#     have to either ramp onto or wall someone off of
+#   two low side ledges for the opening trade, and nothing else. Empty floor is
+#     the point -- the cover in a build fight is the cover you build.
+# ---------------------------------------------------------------------------
+BOX_ARENA = [
+    [0, -1.0, 0, 48, 2.0, 48, "ground"],
+    # perimeter -- 12 high, 2 thick, sitting just inside the ground edge
+    [0, 6.0, -24.0, 48, 12.0, 2.0, "lip"],
+    [0, 6.0, 24.0, 48, 12.0, 2.0, "lip"],
+    [-24.0, 6.0, 0, 2.0, 12.0, 48, "lip"],
+    [24.0, 6.0, 0, 2.0, 12.0, 48, "lip"],
+    # centre high ground
+    [0, 2.0, 0, 12, 4.0, 12, "pillar"],
+    # the two ledges either side of it
+    [-12, 1.0, 0, 4, 2.0, 12, "crate"],
+    [12, 1.0, 0, 4, 2.0, 12, "crate"],
+    # something to break line of sight off spawn, so the first shot is not free
+    [-7, 1.5, -15, 6, 3.0, 3, "crate"],
+    [7, 1.5, 15, 6, 3.0, 3, "crate"],
+]
+
+BOX_SPAWNS = [
+    [0.0, 0.5, -20.0, 0.0],
+    [0.0, 0.5, 20.0, 180.0],
+    [-20.0, 0.5, 0.0, 90.0],
+    [20.0, 0.5, 0.0, 270.0],
+]
+
+# Which layout each mode plays on. A duel gets the box; everything else gets
+# the open arena it was built for.
+ARENAS = {
+    "open": (OPEN_ARENA, OPEN_SPAWNS),
+    "box": (BOX_ARENA, BOX_SPAWNS),
+}
+MODE_ARENA = {"duel": "box"}
+
+# The layout currently loaded. Rebound by load_arena() whenever a match starts,
+# which is also what rebuilds ARENA_BOXES -- every collision path reads that
+# list, so nothing else has to know the map changed.
+ARENA_NAME = "open"
+ARENA, SPAWNS = ARENAS["open"]
 
 DUMMIES = [
     [-8.0, 0.0, -20.0],
@@ -297,6 +370,19 @@ def box_from_center(c, s, kind, ref=None):
 
 ARENA_BOXES = [box_from_center([b[0], b[1], b[2]], [b[3], b[4], b[5]], "arena", b[6])
                for b in ARENA]
+
+
+def load_arena(name):
+    """Swap the live layout. Rebuilds ARENA_BOXES in place, because every
+    collision path in the server holds a reference to that one list."""
+    global ARENA, SPAWNS, ARENA_NAME
+    if name not in ARENAS or name == ARENA_NAME:
+        return False
+    ARENA_NAME = name
+    ARENA, SPAWNS = ARENAS[name]
+    ARENA_BOXES[:] = [box_from_center([b[0], b[1], b[2]], [b[3], b[4], b[5]],
+                                      "arena", b[6]) for b in ARENA]
+    return True
 
 
 def ray_box(origin, d, box, tmax):
@@ -503,6 +589,11 @@ def floor_hole(mask, x0, z0):
     hz0 = max(z0, z0 + min(rs) * half - pad)
     hz1 = min(z0 + CELL, z0 + (max(rs) + 1) * half + pad)
     return (hx0, hx1, hz0, hz1)
+
+
+def loadout_for(mode):
+    """The weapons a mode hands out, in hotbar order."""
+    return CONFIG["MODE_LOADOUT"].get(mode) or CONFIG["LOADOUT"]
 
 
 def canon_wall(cx, cy, cz, direction):
@@ -1060,6 +1151,7 @@ class Game(object):
             "kills": 0, "deaths": 0,
             "respawn_at": 0.0, "protect_until": 0.0, "last_build": 0.0,
             "last_dmg_from": None, "last_dmg_at": 0.0,
+            "hist": [],                 # (server ms, pos, crouch) for rewinds
             # bot-only scratch
             "bt": {"state": "IDLE", "target": None, "next_fire": 0.0,
                    "next_build": 0.0, "stuck_t": 0.0, "last_pos": [0, 0, 0],
@@ -1086,7 +1178,7 @@ class Game(object):
             c.send(msg)
 
     # -- world ------------------------------------------------------------
-    def collision_boxes(self, exclude_pid=None, include_players=False):
+    def collision_boxes(self, exclude_pid=None, include_players=False, at_ms=None):
         boxes = list(ARENA_BOXES)
         for key, pc in self.pieces.items():
             boxes.extend(pc["boxes"])
@@ -1094,14 +1186,21 @@ class Game(object):
             for p in self.players.values():
                 if not p["alive"] or p["id"] == exclude_pid:
                     continue
-                boxes.extend(self.hitboxes(p))
+                boxes.extend(self.hitboxes(p, at_ms))
         return boxes
 
-    def hitboxes(self, p):
+    def hitboxes(self, p, at_ms=None):
+        """Body and head boxes for `p`, optionally REWOUND to a past instant.
+
+        See rewind_to() for why shots carry a time at all."""
+        pos, crouch = p["pos"], p["crouch"]
+        if at_ms is not None:
+            r = self.rewind_to(p, at_ms)
+            if r is not None:
+                pos, crouch = r
         w = CONFIG["P_W"]
-        h = CONFIG["P_H_CROUCH"] if p["crouch"] else CONFIG["P_H"]
+        h = CONFIG["P_H_CROUCH"] if crouch else CONFIG["P_H"]
         hh = CONFIG["HEAD_H"]
-        pos = p["pos"]
         body = Box([pos[0] - w / 2, pos[1], pos[2] - w / 2],
                    [pos[0] + w / 2, pos[1] + h - hh, pos[2] + w / 2],
                    "body", p["id"])
@@ -1109,6 +1208,65 @@ class Game(object):
                    [pos[0] + hh / 2, pos[1] + h, pos[2] + hh / 2],
                    "head", p["id"])
         return [body, head]
+
+    # -- lag compensation -------------------------------------------------
+    #
+    # A client does not see the present. It renders remote players INTERP_MS
+    # behind the newest snapshot, and that snapshot is already one network trip
+    # old. So when someone puts their crosshair on a head and clicks, the head
+    # they are looking at is somewhere between 100ms and 250ms in the past --
+    # and by the time the shot arrives here, that player has moved. Validating
+    # against the present is what makes a strafing target feel bulletproof and
+    # makes you feel like you are shooting behind them. You are.
+    #
+    # So each shot carries the server timestamp the client was RENDERING when
+    # it fired (`at`, taken straight from the interpolation clock), and every
+    # other player is rewound to that instant before the ray is cast. The
+    # shooter is never rewound: they see themselves in the present.
+    #
+    # The window is clamped hard. Trusting a client-supplied rewind without a
+    # bound means anyone can ask to shoot at where you stood a minute ago.
+    def record_history(self, now_ms):
+        """One sample per state broadcast, on the same clock the client
+        interpolates against -- that is what makes `at` directly comparable."""
+        keep = CONFIG["LAG_COMP_MS"] + 250
+        for p in self.players.values():
+            h = p["hist"]
+            h.append((now_ms, list(p["pos"]), p["crouch"]))
+            cut = now_ms - keep
+            while len(h) > 2 and h[0][0] < cut:
+                h.pop(0)
+
+    def rewind_to(self, p, at_ms):
+        """(pos, crouch) for `p` at server time `at_ms`, or None to use now."""
+        h = p["hist"]
+        if not h:
+            return None
+        newest = h[-1][0]
+        # never forward in time, and never further back than the window allows
+        at_ms = min(at_ms, newest)
+        at_ms = max(at_ms, newest - CONFIG["LAG_COMP_MS"])
+        if at_ms >= newest:
+            return None
+        if at_ms <= h[0][0]:
+            return list(h[0][1]), h[0][2]
+        for i in range(len(h) - 1):
+            a, b = h[i], h[i + 1]
+            if a[0] <= at_ms <= b[0]:
+                span = b[0] - a[0]
+                f = 0.0 if span <= 0 else (at_ms - a[0]) / float(span)
+                pos = [a[1][j] + (b[1][j] - a[1][j]) * f for j in range(3)]
+                # crouch is a state, not a number -- take the sample you are
+                # closer to rather than blending two heights into a third
+                return pos, (a[2] if f < 0.5 else b[2])
+        return None
+
+    def shot_time(self, m):
+        """The rewind instant a shot message asks for, or None for 'now'."""
+        at = m.get("at")
+        if not isinstance(at, (int, float)):
+            return None
+        return float(at)
 
     def spawn_dummies(self):
         self.dummies = []
@@ -1267,13 +1425,35 @@ class Game(object):
         r = CONFIG["BUILD_RADIUS"]
         step = CARD[direction & 3]
         if ptype == "ramp":
-            return (dx, dz) == (0, 0) or (dx, dz) == step
+            # A stride, not a throw: the box you stand in, or one box away.
+            # Deliberately ANY of the four neighbours rather than only the one
+            # the ramp faces -- reach is a question of distance, and tying it to
+            # facing meant a rotated ramp could only be placed under your own
+            # feet. You aim at a cell and turn the ramp inside it; those are two
+            # separate things.
+            return abs(dx) + abs(dz) <= 1
         if dx * dx + dz * dz <= r * r:
             return True
         if ptype == "wall":
             ax, az = dx + step[0], dz + step[1]
             return ax * ax + az * az <= r * r
         return False
+
+    def build_sight_boxes(self, p):
+        """Collision for the build line-of-sight test, minus your OWN pieces.
+
+        The rule exists to stop you building through an ENEMY's wall, and only
+        that. Counting your own builds as blockers is what made going vertical
+        so awkward: inside your own box every cell worth filling is behind a
+        wall you just placed, so the ramp above your head was refused by the
+        floor you were standing on. Your own build is not cover you are seeing
+        through -- it is the structure you are extending."""
+        boxes = list(ARENA_BOXES)
+        for key, pc in self.pieces.items():
+            if pc["owner"] == p["id"]:
+                continue
+            boxes.extend(pc["boxes"])
+        return boxes
 
     def build_los_clear(self, p, boxes):
         """Nothing solid may stand between you and the box you are filling.
@@ -1297,7 +1477,7 @@ class Game(object):
         if dist < 1.2:
             return True
         d = v_scale(seg, 1.0 / dist)
-        t, _ = raycast(eye, d, self.collision_boxes(), dist - 0.15)
+        t, _ = raycast(eye, d, self.build_sight_boxes(p), dist - 0.15)
         # A hit at t=0 means the ray STARTED inside something -- the player is
         # embedded in a piece, not looking through one. Counting that as blocked
         # would take building away from someone stuck inside geometry, which is
@@ -1575,6 +1755,11 @@ class Game(object):
         p["ammo"] = {w: CONFIG["WEAPONS"][w]["mag"] for w in CONFIG["LOADOUT"]}
         p["reloading"] = None
         p["reload_until"] = 0.0
+        # A mode can take a weapon away between rounds -- holding a grenade
+        # when a duel starts would leave you holding something you cannot use
+        # and no longer have a hotbar key for.
+        if not self.can_use(p["hand"]) and p["hand"] not in CONFIG["BUILD_PIECES"]:
+            p["hand"] = loadout_for(self.mode)[0]
         p["protect_until"] = time.time() + (CONFIG["SPAWN_PROTECT"]
                                             if self.mode == "dm" else 0.0)
         self.broadcast({"t": "respawn", "id": p["id"], "pos": p["pos"],
@@ -1597,8 +1782,17 @@ class Game(object):
         self.broadcast({"t": "round", "n": self.round_no,
                         "until": CONFIG["ROUND_COUNTDOWN"]})
 
+    def send_arena(self):
+        self.broadcast({"t": "arena", "name": ARENA_NAME,
+                        "arena": ARENA, "spawns": SPAWNS})
+
     def start_match(self, mode):
         self.mode = mode
+        # A duel plays in the box; everything else plays on the open map. The
+        # layout has to land before spawn() runs, or players are placed at the
+        # old map's spawn points -- outside the new one's walls.
+        if load_arena(MODE_ARENA.get(mode, "open")):
+            self.send_arena()
         self.round_no = 0
         self.winner = None
         self.grenades = []
@@ -1630,6 +1824,8 @@ class Game(object):
     def to_lobby(self):
         self.mode = "lobby"
         self.phase = "lobby"
+        if load_arena("open"):
+            self.send_arena()
         self.winner = None
         self.wipe_builds()
         self.grenades = []
@@ -1661,11 +1857,18 @@ class Game(object):
                 self.to_lobby()
 
     # -- shooting ---------------------------------------------------------
-    def do_shoot(self, p, weapon, origin, direction, seed):
+    def can_use(self, weapon):
+        """Is this weapon in the current mode's loadout? One gate, asked by
+        every path that can put a weapon in someone's hands -- switching,
+        shooting, reloading, throwing -- so a mode's loadout cannot be stepped
+        around by sending the message for a weapon you were never given."""
+        return weapon in loadout_for(self.mode)
+
+    def do_shoot(self, p, weapon, origin, direction, seed, at_ms=None):
         if not p["alive"] or self.phase != "live":
             return
         w = CONFIG["WEAPONS"].get(weapon)
-        if w is None or weapon == "grenade":
+        if w is None or weapon == "grenade" or not self.can_use(weapon):
             return
         now = time.time()
         if now - p["last_shot"].get(weapon, 0.0) < w["rate"] * 0.85:
@@ -1690,7 +1893,9 @@ class Game(object):
             origin = eye
         d = v_norm(direction)
 
-        boxes = self.collision_boxes(exclude_pid=p["id"], include_players=True)
+        # everyone but the shooter, rewound to what the shooter was looking at
+        boxes = self.collision_boxes(exclude_pid=p["id"], include_players=True,
+                                     at_ms=at_ms)
         if self.mode == "aim":
             boxes.extend(self.target_boxes())
         if self.dummies:
@@ -1755,8 +1960,13 @@ class Game(object):
                         "seed": seed, "d": [round(v, 4) for v in d]},
                        exclude=p["id"])
 
-    def melee(self, p, direction):
+    def melee(self, p, direction, at_ms=None):
         if not p["alive"] or self.phase != "live":
+            return
+        # The pickaxe is a weapon like any other, and a mode that does not hand
+        # it out must not be reachable by sending `shoot` with w="pickaxe" --
+        # do_shoot() is gated, so this has to be too or the gate has a door in it.
+        if not self.can_use("pickaxe"):
             return
         w = CONFIG["WEAPONS"]["pickaxe"]
         now = time.time()
@@ -1765,7 +1975,8 @@ class Game(object):
         p["last_shot"]["pickaxe"] = now
         eye_h = CONFIG["EYE_CROUCH"] if p["crouch"] else CONFIG["EYE"]
         eye = [p["pos"][0], p["pos"][1] + eye_h, p["pos"][2]]
-        boxes = self.collision_boxes(exclude_pid=p["id"], include_players=True)
+        boxes = self.collision_boxes(exclude_pid=p["id"], include_players=True,
+                                     at_ms=at_ms)
         if self.mode == "aim":
             boxes.extend(self.target_boxes())
         if self.dummies:
@@ -1793,8 +2004,20 @@ class Game(object):
                                    "dmg": round(w["build_dmg"]), "pos": end})
         elif box.kind == "target":
             self.hit_target(box.ref, p)
+        elif box.kind == "arena":
+            # Farming. Regen alone means materials are a function of time and
+            # nothing else, so there is no reason to ever leave your box; a
+            # pickaxe that pays makes the ground itself worth something.
+            if self.mode != "build":
+                p["mats"] = min(CONFIG["MAT_CAP"],
+                                p["mats"] + CONFIG["MAT_PER_SWING"])
+                self.send_to(p["id"], {"t": "you", "mats": p["mats"]})
+            self.send_to(p["id"], {"t": "hit", "kind": "farm",
+                                   "dmg": CONFIG["MAT_PER_SWING"], "pos": end})
 
     def throw_grenade(self, p, origin, direction):
+        if not self.can_use("grenade"):
+            return
         w = CONFIG["WEAPONS"]["grenade"]
         now = time.time()
         if now - p["last_shot"].get("grenade", 0.0) < w["rate"]:
@@ -2092,8 +2315,11 @@ class Game(object):
                        round(p["yaw"], 1), round(p["pitch"], 1), flags,
                        round(p["hp"]), round(p["shield"]),
                        CONFIG["LOADOUT"].index(p["hand"]) if p["hand"] in CONFIG["LOADOUT"] else -1])
-        msg = {"t": "state", "k": self.tick, "ts": round(now * 1000),
-               "ps": ps}
+        now_ms = round(now * 1000)
+        # Sampled here, with the very number the clients interpolate against,
+        # so a shot's `at` lands on this timeline exactly.
+        self.record_history(now_ms)
+        msg = {"t": "state", "k": self.tick, "ts": now_ms, "ps": ps}
         if self.grenades:
             msg["gs"] = [[g["id"], round(g["pos"][0], 2), round(g["pos"][1], 2),
                           round(g["pos"][2], 2)] for g in self.grenades]
@@ -2142,10 +2368,10 @@ class Game(object):
                 return
             w = m.get("w")
             if w == "pickaxe":
-                self.melee(p, m.get("d") or [0, 0, 1])
+                self.melee(p, m.get("d") or [0, 0, 1], self.shot_time(m))
                 return
             self.do_shoot(p, w, m.get("o") or p["pos"], m.get("d") or [0, 0, 1],
-                          int(m.get("seed", 0)) & 0xFFFFFFFF)
+                          int(m.get("seed", 0)) & 0xFFFFFFFF, self.shot_time(m))
             return
 
         if t == "grenade":
@@ -2174,14 +2400,14 @@ class Game(object):
 
         if t == "switch":
             h = m.get("hand")
-            if h in CONFIG["LOADOUT"] or h in CONFIG["BUILD_PIECES"]:
+            if self.can_use(h) or h in CONFIG["BUILD_PIECES"]:
                 p["hand"] = h
                 p["reloading"] = None
             return
 
         if t == "reload":
             h = m.get("w") if m.get("w") in CONFIG["WEAPONS"] else p["hand"]
-            w = CONFIG["WEAPONS"].get(h)
+            w = CONFIG["WEAPONS"].get(h) if self.can_use(h) else None
             if w and w["mag"] > 0 and p["ammo"].get(h, 0) < w["mag"] and not p["reloading"]:
                 p["reloading"] = h
                 p["reload_until"] = time.time() + w["reload"]

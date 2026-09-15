@@ -85,6 +85,22 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:17px;heigh
 .err{color:var(--bad);font-size:13px;margin-top:12px;min-height:18px;letter-spacing:.02em}
 .err.info{color:var(--dim)}
 
+/* option toggles */
+.opt{display:flex;align-items:center;gap:14px;padding:9px 11px;background:#070c14;
+  border:1px solid var(--line);cursor:pointer;user-select:none}
+.opt+.opt{margin-top:6px}
+.opt:hover{border-color:var(--line2)}
+.opt span{flex:1;display:block;min-width:0}
+.opt b{display:block;font-size:12.5px;font-weight:600;color:var(--txt);letter-spacing:.02em}
+.opt i{display:block;font-style:normal;font-size:10.5px;color:var(--dim2);margin-top:3px;
+  line-height:1.4}
+.opt u{position:relative;flex:none;width:38px;height:20px;background:#0d1522;
+  border:1px solid var(--line2);text-decoration:none;transition:background .15s,border-color .15s}
+.opt u::after{content:"";position:absolute;left:2px;top:2px;width:14px;height:14px;
+  background:var(--dim2);transition:transform .16s cubic-bezier(.2,.8,.3,1),background .15s}
+.opt.on u{border-color:var(--accent);background:rgba(29,88,128,.45)}
+.opt.on u::after{transform:translateX(18px);background:var(--accent)}
+
 /* key bindings */
 #binds{max-height:210px;overflow:auto;background:#070c14;border:1px solid var(--line);padding:7px}
 .bindrow{display:flex;align-items:center;gap:10px;padding:5px 8px;font-size:13px}
@@ -185,22 +201,61 @@ kbd{display:inline-block;min-width:26px;text-align:center;background:var(--panel
 #reloadbar i{display:block;height:100%;width:0;background:var(--accent);
   box-shadow:0 0 10px var(--accent)}
 
-/* slot bar */
-#slots{position:absolute;left:50%;bottom:26px;transform:translateX(-50%);display:flex;gap:5px}
-.slot{position:relative;width:56px;height:50px;background:rgba(8,13,20,.8);
-  border:1px solid var(--line);display:flex;flex-direction:column;align-items:center;
-  justify-content:center;gap:3px;transition:border-color .15s,background .15s,transform .15s;
+/* slot bar -- the right EDGE, not the bottom, so it sits beside the crosshair
+   instead of stacked under it with everything else.
+
+   Two groups, and only one of them is usable at a time: holding a rifle you
+   cannot place a wall, and holding a wall you cannot shoot. So only the usable
+   group is at full size and the other shrinks back to a key reminder. Growth
+   is restrained on purpose -- the sizes are a step apart, not a jump, and the
+   state is carried by size and colour rather than by any extra chrome. */
+#slots{position:absolute;right:24px;top:72px;bottom:176px;display:flex;flex-direction:column;
+  justify-content:center;gap:16px;align-items:flex-end;pointer-events:none}
+.sgroup{display:flex;flex-direction:column;gap:4px;align-items:flex-end;
+  --sw:44px;--sh:32px;--sk:10.5px;--sn:8px;
+  opacity:.52;transition:opacity .2s cubic-bezier(.2,.8,.3,1)}
+.sgroup.lead{--sw:132px;--sh:44px;--sk:12px;--sn:9.5px;opacity:1}
+.sgroup u{font:700 8px var(--fb);letter-spacing:.22em;color:var(--dim2);text-decoration:none;
+  padding-right:3px;margin-bottom:2px;white-space:nowrap}
+.slot{position:relative;width:var(--sw);height:var(--sh);background:rgba(8,13,20,.8);
+  border:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;
+  gap:10px;padding:0 10px;overflow:hidden;
+  transition:width .22s cubic-bezier(.2,.8,.3,1),height .22s cubic-bezier(.2,.8,.3,1),
+             border-color .15s,background .15s,transform .15s;
   clip-path:polygon(0 0,calc(100% - 8px) 0,100% 8px,100% 100%,8px 100%,0 calc(100% - 8px))}
-.slot b{font:700 12px var(--fb);color:var(--dim2);letter-spacing:.06em}
-.slot i{font-style:normal;font-size:9px;color:var(--dim2);letter-spacing:.04em;font-weight:600;
-  text-transform:uppercase}
-.slot.on{border-color:var(--accent);background:linear-gradient(180deg,rgba(29,88,128,.75),rgba(10,22,34,.85));
-  transform:translateY(-4px)}
+.slot i{font-style:normal;font:700 var(--sn)/1 var(--fb);color:var(--dim2);letter-spacing:.12em;
+  text-transform:uppercase;white-space:nowrap;transition:font-size .22s,color .15s}
+.slot b{font:700 var(--sk)/1 var(--fb);color:var(--dim2);letter-spacing:.04em;
+  min-width:1.2em;text-align:center;transition:font-size .22s,color .15s}
+/* shrunk: there is no room for a name, and the key is the only part you act on */
+.sgroup:not(.lead) .slot{justify-content:center;padding:0;gap:0}
+.sgroup:not(.lead) .slot i{display:none}
+.slot.on{border-color:var(--accent);
+  background:linear-gradient(90deg,rgba(29,88,128,.75),rgba(10,22,34,.85));
+  transform:translateX(-5px)}
 .slot.on b{color:#fff}
 .slot.on i{color:#cfe6f7}
 .slot.on.build{border-color:var(--mat);
-  background:linear-gradient(180deg,rgba(122,88,26,.75),rgba(30,22,8,.85))}
+  background:linear-gradient(90deg,rgba(122,88,26,.75),rgba(30,22,8,.85))}
 .slot.on.build i,.slot.on.build b{color:#ffe4ad}
+/* out of materials: the build group says so rather than silently failing */
+.slot.broke{opacity:.4}
+
+/* killcam -- the live HUD is meaningless during a replay, so it goes away */
+#hud.replay #cross,#hud.replay #slots,#hud.replay #ammo,#hud.replay #matbox,
+#hud.replay #vitals,#hud.replay #pieceinfo,#hud.replay #edithint{opacity:0;
+  transition:opacity .2s linear;pointer-events:none}
+#killcam{position:absolute;left:50%;top:22px;transform:translateX(-50%);text-align:center;
+  background:rgba(8,13,20,.86);border:1px solid var(--line2);padding:10px 26px 12px;
+  min-width:230px;
+  clip-path:polygon(0 0,calc(100% - 11px) 0,100% 11px,100% 100%,11px 100%,0 calc(100% - 11px))}
+#killcam u{display:block;font:700 8.5px var(--fb);letter-spacing:.3em;color:var(--bad);
+  text-decoration:none;text-transform:uppercase}
+#killcam b{display:block;font:400 22px/1.25 var(--fh);color:#fff;letter-spacing:.02em}
+#killcam .kcbar{height:2px;background:var(--line);margin:9px 0 7px;overflow:hidden}
+#killcam .kcbar i{display:block;height:100%;width:0;background:var(--bad)}
+#killcam s{display:block;text-decoration:none;font:700 8.5px var(--fb);letter-spacing:.2em;
+  color:var(--dim2);text-transform:uppercase}
 
 /* killfeed */
 #killfeed{position:absolute;right:30px;top:26px;display:flex;flex-direction:column;gap:5px;
@@ -280,6 +335,7 @@ kbd{display:inline-block;min-width:26px;text-align:center;background:var(--panel
   animation:dfloat 1s cubic-bezier(.2,.8,.3,1) forwards}
 .dnum.head{color:var(--bad);font-size:24px}
 .dnum.build{color:var(--mat);font-size:15px}
+.dnum.farm{color:var(--mat);font-size:17px;font-weight:600}
 @keyframes dfloat{to{transform:translate(-50%,-52px);opacity:0}}
 #dmgdir{position:absolute;inset:0}
 .dind{position:absolute;left:50%;top:50%;width:210px;height:210px;margin:-105px 0 0 -105px;
@@ -415,6 +471,11 @@ kbd{display:inline-block;min-width:26px;text-align:center;background:var(--panel
   <div id="chatlog"></div>
   <input id="chatin" maxlength="140" placeholder="say something…">
   <div id="aimstat" class="hidden"></div>
+  <div id="killcam" class="hidden">
+    <u>Killcam</u><b>Killer</b>
+    <div class="kcbar"><i></i></div>
+    <s>Click to skip</s>
+  </div>
 </div>
 
 <div id="scope"></div>
@@ -447,9 +508,9 @@ kbd{display:inline-block;min-width:26px;text-align:center;background:var(--panel
       <label>Controls</label>
       <div class="keys">
         <b><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></b><span>Move &middot; <kbd>Space</kbd> jump &middot; <kbd>Shift</kbd> crouch</span>
-        <b><kbd>1</kbd>–<kbd>5</kbd></b><span>Pickaxe &middot; Rifle &middot; Shotgun &middot; Sniper &middot; Grenade</span>
+        <b><kbd>1</kbd>–<kbd>5</kbd></b><span>Weapon slots, in the order this mode gives them &middot; <kbd>G</kbd> pickaxe</span>
         <b><kbd>Z</kbd><kbd>X</kbd><kbd>C</kbd><kbd>V</kbd></b><span>Wall &middot; Ramp &middot; Floor &middot; Cone <i style="color:var(--dim2);font-style:normal">(rebind in the pause menu)</i></span>
-        <b><kbd>F</kbd></b><span>Edit a piece you built &middot; <kbd>R</kbd> reload &middot; <kbd>G</kbd> grenade</span>
+        <b><kbd>F</kbd></b><span>Edit a piece you built &middot; <kbd>R</kbd> reload &middot; grenades throw on left click</span>
         <b>Mouse</b><span>Left fire / build &middot; Right aim &middot; <kbd>Tab</kbd> scores &middot; <kbd>Enter</kbd> chat</span>
       </div>
     </div>
@@ -516,6 +577,21 @@ kbd{display:inline-block;min-width:26px;text-align:center;background:var(--panel
     <div class="field">
       <label for="vol">Volume — <span id="volv">60</span>%</label>
       <input id="vol" type="range" min="0" max="100" step="1" value="60">
+    </div>
+    <div class="field">
+      <label>Building &amp; editing</label>
+      <div class="opt" id="opt-turbo">
+        <span><b>Turbo build</b><i>Hold left mouse to keep placing pieces</i></span>
+        <u></u>
+      </div>
+      <div class="opt" id="opt-edithold">
+        <span><b>Edit on release</b><i>Hold the edit key and let go to apply, instead of pressing twice</i></span>
+        <u></u>
+      </div>
+      <div class="opt" id="opt-killcam">
+        <span><b>Killcam</b><i>Watch the last few seconds from your killer's view &mdash; click to skip</i></span>
+        <u></u>
+      </div>
     </div>
     <div class="field">
       <label>Key bindings — click one, then press a key</label>
@@ -893,7 +969,7 @@ const state = {
   players: new Map(),            // id -> {name,bot,mesh,...}
   running: false, paused: false, dead: false, spectator: false,
   hp: 100, shield: 100, mats: 500,
-  hand: 'ar', ads: false, editing: null,
+  hand: 'ar', ads: false, editing: null, buildRot: 0,
   ammo: {}, reloadUntil: 0, reloadFor: 0, reloading: null,
   ping: 0, fps: 0, roundNo: 0,
   aim: null,
@@ -906,7 +982,7 @@ const DEFAULT_KEYS = {
   forward: 'w', back: 's', left: 'a', right: 'd',
   jump: ' ', crouch: 'shift',
   wall: 'z', ramp: 'x', floor: 'c', roof: 'v',
-  edit: 'f', reload: 'r', grenade: 'g',
+  edit: 'f', reload: 'r', pickaxe: 'g', rotate: 't',
   slot1: '1', slot2: '2', slot3: '3', slot4: '4', slot5: '5',
   scores: 'tab', chat: 'enter',
 };
@@ -914,12 +990,19 @@ const KEY_LABELS = {
   forward: 'Move forward', back: 'Move back', left: 'Strafe left', right: 'Strafe right',
   jump: 'Jump', crouch: 'Crouch',
   wall: 'Build wall', ramp: 'Build ramp', floor: 'Build floor', roof: 'Build cone',
-  edit: 'Edit piece', reload: 'Reload', grenade: 'Grenade',
-  slot1: 'Pickaxe', slot2: 'Rifle', slot3: 'Shotgun', slot4: 'Sniper', slot5: 'Grenade slot',
+  edit: 'Edit piece', reload: 'Reload', pickaxe: 'Pickaxe',
+  rotate: 'Rotate build piece',
+  slot1: 'Slot 1', slot2: 'Slot 2', slot3: 'Slot 3', slot4: 'Slot 4', slot5: 'Slot 5',
   scores: 'Scoreboard', chat: 'Chat',
 };
 const settings = {
   sens: 1, fov: 75, vol: 0.6, name: '', keys: null, presets: null, preset: 0,
+  /* Play-feel switches. Both are on the muscle-memory end of the spectrum --
+     some people want them and some people are actively slowed down by them --
+     so they are settings rather than decisions made for everybody.
+       turbo    hold left mouse to keep placing, instead of one click per piece
+       editHold hold the edit key and release to apply, instead of F-on/F-off */
+  turbo: true, editHold: false, killcam: true,
 };
 try {
   const s = JSON.parse(localStorage.getItem('bf_settings') || '{}');
@@ -940,13 +1023,22 @@ if (!Array.isArray(settings.presets) || settings.presets.length !== PRESET_N) {
   }
   // whatever was already bound becomes preset 1, so an upgrade loses nothing
   seed[0].keys = Object.assign({}, DEFAULT_KEYS, settings.keys || {});
+  // (cleanKeys below drops anything retired that came in with it)
   settings.presets = seed;
+}
+/* Only actions that still exist survive a load. Without this a preset saved
+   when `G` threw a grenade keeps that bind forever, and since keyAction is
+   key -> action, the stale entry silently wins the key back off the pickaxe. */
+function cleanKeys(saved) {
+  const out = Object.assign({}, DEFAULT_KEYS);
+  for (const a in saved) if (a in DEFAULT_KEYS) out[a] = saved[a];
+  return out;
 }
 for (let i = 0; i < PRESET_N; i++) {
   const pr = settings.presets[i] || {};
   settings.presets[i] = {
     name: typeof pr.name === 'string' && pr.name ? pr.name.slice(0, 18) : 'Preset ' + (i + 1),
-    keys: Object.assign({}, DEFAULT_KEYS, pr.keys || {}),
+    keys: cleanKeys(pr.keys || {}),
   };
 }
 settings.preset = Math.max(0, Math.min(PRESET_N - 1, settings.preset | 0));
@@ -1227,7 +1319,16 @@ function makeSky() {
   return new THREE.Mesh(geo, m);
 }
 
+let arenaGroup = null;
+/* Re-runnable: the map changes when a duel starts and changes back in the
+   lobby, so the old meshes have to go or every layout ever loaded stays in the
+   scene, invisible geometry and all. */
 function buildArena() {
+  if (arenaGroup) {
+    scene.remove(arenaGroup);
+    disposeMesh(arenaGroup);
+    arenaGroup = null;
+  }
   arenaBoxes = [];
   const grp = new THREE.Group();
   for (const b of ARENA) {
@@ -1245,6 +1346,8 @@ function buildArena() {
     arenaBoxes.push(boxFromCenter([cx, cy, cz], [sx, sy, sz], 'arena', tag));
   }
   scene.add(grp);
+  arenaGroup = grp;
+  collidersDirty = true;
 }
 
 function initScene() {
@@ -1971,6 +2074,14 @@ function camForward() {
 let ghost = null, ghostValid = false, ghostPlan = null;
 function buildGhost() { buildGeo(); }
 function isBuildHand(h) { return CFG.BUILD_PIECES.indexOf(h) >= 0; }
+/* What this mode actually hands you -- mirrors loadout_for() in server.py.
+   A duel is three guns and nothing else, so the hotbar, the number keys and
+   the quick-draw key all have to ask this rather than CFG.LOADOUT, or they
+   offer weapons the server will refuse to let you hold. */
+function activeLoadout() {
+  return (CFG.MODE_LOADOUT && CFG.MODE_LOADOUT[state.mode]) || CFG.LOADOUT;
+}
+function canUse(w) { return activeLoadout().indexOf(w) >= 0; }
 
 function quantDir(d) {
   return Math.abs(d[0]) > Math.abs(d[2]) ? (d[0] > 0 ? 1 : 3) : (d[2] > 0 ? 2 : 0);
@@ -2102,8 +2213,9 @@ function cellInReach(piece, cx, cy, cz, dq) {
   const r = CFG.BUILD_RADIUS;
   const inCircle = (ax, az) => ax * ax + az * az <= r * r;
   if (piece === 'ramp') {
-    const st = CARD[dq];
-    return (dx === 0 && dz === 0) || (dx === st[0] && dz === st[2]);
+    // a stride, not a throw: here, or one box away in any direction. Not tied
+    // to facing -- see cell_in_reach() in server.py for why rotation needs that
+    return Math.abs(dx) + Math.abs(dz) <= 1;
   }
   if (piece === 'wall') {
     const st = CARD[(dq + 2) % 4];        // the facing canonWall() will use
@@ -2121,13 +2233,24 @@ function cellInReach(piece, cx, cy, cz, dq) {
    centre means the ray has to pass through the piece you are STANDING on to get
    there, so standing on a ramp refused the next ramp -- which is the single most
    common thing anyone builds. */
+/* Your OWN pieces do not block a build. The rule exists to stop you building
+   through an ENEMY's wall and only that -- counting your own builds made going
+   vertical awkward, because inside your own box every cell worth filling is
+   behind something you just placed. Mirrors build_sight_boxes() in server.py. */
+function buildSightBoxes(near) {
+  return near.filter((b) => {
+    if (b.kind !== 'piece' || b.ref == null) return true;
+    const rec = pieces.get(b.ref);
+    return !rec || rec.owner !== state.myId;
+  });
+}
 function losClear(boxes, near) {
   const eye = eyePos(), b = boundsOf(boxes), seg = [0, 0, 0];
   for (let i = 0; i < 3; i++) seg[i] = clamp(eye[i], b[0][i], b[1][i]) - eye[i];
   const dist = Math.hypot(seg[0], seg[1], seg[2]);
   if (dist < 1.2) return true;
   const d = [seg[0] / dist, seg[1] / dist, seg[2] / dist];
-  const hit = raycast(eye, d, near, dist - 0.15);
+  const hit = raycast(eye, d, buildSightBoxes(near), dist - 0.15);
   /* A hit at t=0 means the ray STARTED inside something -- you are embedded in
      a piece, not looking through one. Counting that as blocked would take
      building away from a player who is stuck inside geometry, which is the
@@ -2154,9 +2277,25 @@ function nearbyColliders(radius) {
   return out;
 }
 
+/* Ramps and cones are placed facing the way you are looking. `buildRot` turns
+   that by quarter turns so you can lay a ramp across your path instead of
+   along it -- the one thing you cannot express by turning your own body,
+   because turning your body also turns where the piece lands.
+
+   Walls and floors are deliberately NOT rotated: a wall's facing is which EDGE
+   of the cell it occupies and a floor has no facing at all, so for those two a
+   rotate key would either do nothing or silently move the piece somewhere you
+   did not point. */
+function rotatableHand(h) { return h === 'ramp' || h === 'roof'; }
+function rotateBuild(step) {
+  if (!rotatableHand(state.hand)) return;
+  state.buildRot = (state.buildRot + step + 4) % 4;
+  Audio_.blip(660, 0.025, 'square', 0.06);
+}
 function planBuild(piece) {
   const eye = eyePos(), d = camForward();
   const dq = facingDir();
+  const rot = rotatableHand(piece) ? state.buildRot : 0;
   const off = CARD[dq];
   const baseY = cellOf(me.pos[1] + 0.05);
 
@@ -2198,7 +2337,8 @@ function planBuild(piece) {
     if (!inBounds(cx, cy, cz)) return null;
     if (!cellInReach(piece, cx, cy, cz, dq)) return null;
     let type = piece, dcx = cx, dcy = cy, dcz = cz;
-    const dir = piece === 'wall' ? (dq + 2) % 4 : (piece === 'floor' ? 0 : dq);
+    const dir = piece === 'wall' ? (dq + 2) % 4
+              : (piece === 'floor' ? 0 : (dq + rot) % 4);
     if (piece === 'wall') {
       const w = canonWall(cx, cy, cz, dir);
       type = w[0]; dcx = w[1]; dcy = w[2]; dcz = w[3];
@@ -2693,10 +2833,24 @@ function canFire(w) {
   if (spec.mag > 0 && (state.ammo[w] || 0) <= 0) { autoReload(); return false; }
   return true;
 }
+/* The server-clock instant this client is RENDERING other players at.
+
+   Shots carry it so the server can rewind everyone else to the world you were
+   actually looking at when you clicked. Without it you are shooting at a 100ms
+   interpolation delay plus a network trip of stale positions, and a strafing
+   target feels bulletproof -- because you really are shooting behind them.
+   Mirrors rewind_to() in server.py, which clamps how far back this may ask. */
+function shotTime() { return netTime ? Math.round(netTime) : undefined; }
 function fire() {
   const w = state.hand;
   const spec = CFG.WEAPONS[w];
-  if (!spec || !canFire(w)) return;
+  if (!spec) return;
+  /* A grenade is thrown, not fired. It has its own message because it is a
+     server-owned physics object rather than a hitscan, and `shoot` with a
+     grenade is dropped on the floor by the server -- so without this, holding
+     the grenade and clicking did nothing at all. */
+  if (w === 'grenade') { throwGrenade(); return; }
+  if (!canFire(w)) return;
   lastShot[w] = performance.now() / 1000;
 
   const eye = eyePos();
@@ -2721,7 +2875,7 @@ function fire() {
   sd = [sd[0] / sl, sd[1] / sl, sd[2] / sl];
 
   if (w === 'pickaxe') {
-    Net.send({ t: 'shoot', w: w, o: eye, d: sd });
+    Net.send({ t: 'shoot', w: w, o: eye, d: sd, at: shotTime() });
     Audio_.shot('pickaxe', 0);
     camShake = 0.03;
     const h = raycast(eye, sd, worldBoxes(), spec.range);
@@ -2732,7 +2886,7 @@ function fire() {
   }
 
   const seed = (Math.random() * 0xFFFFFFFF) >>> 0;
-  Net.send({ t: 'shoot', w: w, o: eye, d: sd, seed: seed });
+  Net.send({ t: 'shoot', w: w, o: eye, d: sd, seed: seed, at: shotTime() });
   if (spec.mag > 0) { state.ammo[w] = (state.ammo[w] || 0) - 1; drawAmmo(); }
 
   drawPellets(eye, sd, spec, seed, true);
@@ -2812,6 +2966,7 @@ function autoReload() {
   Net.send({ t: 'reload', w: w });
 }
 function throwGrenade() {
+  if (!canUse('grenade')) return;
   const spec = CFG.WEAPONS.grenade;
   const now = performance.now() / 1000;
   if (now - (lastShot.grenade || 0) < spec.rate) return;
@@ -3117,35 +3272,36 @@ function dropPlayer(id) {
 
 const INTERP_MS = 100;
 let netTime = 0;
+/* Deep enough to hold a killcam's worth of tape, not just the interpolation
+   window -- the replay is played back out of this same buffer, so the buffer
+   is the recording. ~30 snapshots a second. */
+const SNAP_KEEP = 140;
 function pushSnapshot(msg) {
   Net.buffer.push({ ts: msg.ts, ps: msg.ps });
-  if (Net.buffer.length > 40) Net.buffer.shift();
+  if (Net.buffer.length > SNAP_KEEP) Net.buffer.shift();
   if (netTime === 0) netTime = msg.ts - INTERP_MS;
 }
-function sampleRemote(dt) {
-  if (!Net.buffer.length) return;
-  const latest = Net.buffer[Net.buffer.length - 1].ts;
-  netTime += dt * 1000;
-  const want = latest - INTERP_MS;
-  // gentle clock pull so we neither drift nor rubber-band
-  netTime += (want - netTime) * Math.min(1, dt * 3);
-  if (netTime < Net.buffer[0].ts) netTime = Net.buffer[0].ts;
-  // If the buffer starves, hold rather than extrapolate wildly.
-  if (netTime > latest) netTime = Math.min(netTime, latest + 200);
+/* Place every player at server time `ts`.
 
+   `includeMe` is the whole difference between live play and a replay: normally
+   the local player is drawn from live input and must NOT be dragged around by
+   the network, but a killcam has no live input to draw from -- it is watching
+   someone else's last few seconds, and you are one of the people in it. */
+function applySnapshot(ts, includeMe) {
+  if (!Net.buffer.length) return;
   let a = Net.buffer[0], b = Net.buffer[Net.buffer.length - 1];
   for (let i = 0; i < Net.buffer.length - 1; i++) {
-    if (Net.buffer[i].ts <= netTime && Net.buffer[i + 1].ts >= netTime) {
+    if (Net.buffer[i].ts <= ts && Net.buffer[i + 1].ts >= ts) {
       a = Net.buffer[i]; b = Net.buffer[i + 1]; break;
     }
   }
   const span = Math.max(1, b.ts - a.ts);
-  const f = clamp((netTime - a.ts) / span, 0, 1);
+  const f = clamp((ts - a.ts) / span, 0, 1);
   const bmap = new Map();
   for (const row of b.ps) bmap.set(row[0], row);
   for (const row of a.ps) {
     const id = row[0];
-    if (id === state.myId) continue;
+    if (id === state.myId && !includeMe) continue;
     const rp = state.players.get(id);
     if (!rp) continue;
     const rb = bmap.get(id) || row;
@@ -3158,11 +3314,95 @@ function sampleRemote(dt) {
     rp.hp = rb[7]; rp.shield = rb[8];
   }
 }
+function sampleRemote(dt) {
+  if (!Net.buffer.length) return;
+  const latest = Net.buffer[Net.buffer.length - 1].ts;
+  netTime += dt * 1000;
+  const want = latest - INTERP_MS;
+  // gentle clock pull so we neither drift nor rubber-band
+  netTime += (want - netTime) * Math.min(1, dt * 3);
+  if (netTime < Net.buffer[0].ts) netTime = Net.buffer[0].ts;
+  // If the buffer starves, hold rather than extrapolate wildly.
+  if (netTime > latest) netTime = Math.min(netTime, latest + 200);
+  applySnapshot(netTime, false);
+}
+
+/* =========================================================================
+   Killcam -- replayed straight out of the snapshot buffer.
+
+   No extra recording and nothing new on the wire: the buffer already holds
+   every player's position, yaw and pitch for the last few seconds, which is
+   exactly what a replay needs. Watching it is a matter of running the same
+   interpolation backwards in time with the camera parented to the killer's
+   eye instead of your own.
+   ========================================================================= */
+const KILLCAM_MS = 2600;
+const killcam = { active: false, t: 0, to: 0, by: null };
+function killcamAvailable(byId) {
+  return settings.killcam && byId != null && byId !== state.myId &&
+         state.players.has(byId) && Net.buffer.length > 8;
+}
+function startKillcam(byId, byName) {
+  if (!killcamAvailable(byId)) return false;
+  const latest = Net.buffer[Net.buffer.length - 1].ts;
+  const from = Math.max(Net.buffer[0].ts, latest - KILLCAM_MS);
+  if (latest - from < 500) return false;    // not enough tape to be worth it
+  killcam.active = true;
+  killcam.t = from;
+  killcam.to = latest;
+  killcam.by = byId;
+  const el = $('killcam');
+  el.classList.remove('hidden');
+  el.querySelector('b').textContent = byName || 'Killer';
+  $('hud').classList.add('replay');
+  return true;
+}
+function stopKillcam() {
+  if (!killcam.active) return;
+  killcam.active = false;
+  killcam.by = null;
+  $('killcam').classList.add('hidden');
+  $('hud').classList.remove('replay');
+  // hand the world back to the live clock rather than leaving it mid-replay
+  if (Net.buffer.length) netTime = Net.buffer[Net.buffer.length - 1].ts - INTERP_MS;
+}
+function updateKillcam(dt) {
+  const rp = state.players.get(killcam.by);
+  if (!rp) { stopKillcam(); return; }
+  killcam.t += dt * 1000;
+  if (killcam.t >= killcam.to) { stopKillcam(); return; }
+  applySnapshot(killcam.t, true);
+  if (!rp.rpos) { stopKillcam(); return; }
+  // over the killer's shoulder, so you can see both them and what they shot
+  const pitch = clamp(rp.rpitch || 0, -85, 85), yaw = rp.ryaw || 0;
+  const q = new THREE.Euler(pitch * DEG, yaw * DEG, 0, 'YXZ');
+  const fwd = new THREE.Vector3(0, 0, -1).applyEuler(q);
+  const eye = new THREE.Vector3(rp.rpos[0], rp.rpos[1] + CFG.EYE, rp.rpos[2]);
+  const want = eye.clone().add(fwd.clone().multiplyScalar(-2.2))
+                 .add(new THREE.Vector3(0, 0.35, 0));
+  // same wall-avoidance the live camera uses, or the replay films the inside
+  // of whatever the killer was standing behind
+  const dir = want.clone().sub(eye), dist = dir.length();
+  if (dist > 0.01) {
+    dir.normalize();
+    const hit = raycast([eye.x, eye.y, eye.z], [dir.x, dir.y, dir.z],
+                        getColliders(), dist + 0.3);
+    if (hit.t !== null) want.copy(eye).add(dir.multiplyScalar(Math.max(0.2, hit.t - 0.25)));
+  }
+  camera.position.copy(want);
+  camera.rotation.set(pitch * DEG, yaw * DEG, 0, 'YXZ');
+  const frac = (killcam.t - (killcam.to - KILLCAM_MS)) / KILLCAM_MS;
+  $('killcam').querySelector('i').style.width = (clamp(frac, 0, 1) * 100) + '%';
+}
 function updateRemoteVisuals(dt) {
   for (const [id, rp] of state.players) {
     // The local player is drawn from live input, everyone else from the
-    // interpolated snapshot buffer.
-    const isMe = id === state.myId;
+    // interpolated snapshot buffer -- except during a killcam, where there is
+    // no live input to draw from and you are one of the people in the replay.
+    // Falling through to the remote path also gets the visibility right: the
+    // snapshot says you were alive until the moment the tape reaches.
+    const isMe = id === state.myId && !killcam.active;
+    if (id === state.myId && killcam.active && !rp.rpos) continue;
     const pos = isMe ? me.pos : rp.rpos;
     const yaw = isMe ? me.yaw : rp.ryaw;
     const pitch = isMe ? me.pitch : rp.rpitch;
@@ -3270,7 +3510,12 @@ function drawVitals() {
   $('hpt').textContent = Math.ceil(hp);
   $('sht').textContent = Math.ceil(sh);
 }
-function drawMats() { $('matn').textContent = Math.floor(state.mats); }
+function drawMats() {
+  $('matn').textContent = Math.floor(state.mats);
+  // a build slot you cannot afford should say so, not just fail on the click
+  const broke = state.mode !== 'build' && state.mats < CFG.PIECE_COST;
+  for (const el of $('slots').querySelectorAll('.slot.build')) el.classList.toggle('broke', broke);
+}
 function drawAmmo() {
   const w = state.hand, spec = CFG.WEAPONS[w];
   if (isBuildHand(w)) {
@@ -3283,25 +3528,59 @@ function drawAmmo() {
     $('wname').textContent = spec.name;
   }
 }
+// "Assault Rifle" truncates to "Assault", which reads as an adjective
+const SHORT_NAME = { pickaxe: 'Pickaxe', ar: 'Rifle', shotgun: 'Shotgun',
+                     sniper: 'Sniper', grenade: 'Grenade' };
+/* The hotbar is rebuilt whenever its CONTENT changes -- a rebind, a mode
+   change, a new hand. Which group is at full size is a separate, cheaper
+   question, so that lives in focusSlots() and runs on its own. */
 function drawSlots() {
   const wrap = $('slots');
   wrap.innerHTML = '';
-  const items = [];
   // Labels come from the live bind table, so the bar always shows the key
   // that actually works -- including right after a rebind.
   const bindLabel = (a) => settings.keys[a] ? keyName(settings.keys[a]) : '\u2014';
-  CFG.LOADOUT.forEach((w, i) => items.push({
-    k: bindLabel('slot' + (i + 1)), n: CFG.WEAPONS[w].name.split(' ')[0], id: w }));
-  [['wall', 'Wall'], ['ramp', 'Ramp'], ['floor', 'Floor'], ['roof', 'Cone']]
-    .forEach(([id, n]) => items.push({ k: bindLabel(id), n, id, build: true }));
-  for (const it of items) {
-    const d = document.createElement('div');
-    d.className = 'slot' + (state.hand === it.id ? ' on' : '') + (it.build ? ' build' : '');
-    const b = document.createElement('b'); b.textContent = it.k;
-    const i = document.createElement('i'); i.textContent = it.n;
-    d.appendChild(b); d.appendChild(i);
-    wrap.appendChild(d);
-  }
+  const group = (label, items, build) => {
+    const g = document.createElement('div');
+    g.className = 'sgroup' + (build ? ' builds' : ' guns');
+    const u = document.createElement('u'); u.textContent = label;
+    g.appendChild(u);
+    for (const it of items) {
+      const d = document.createElement('div');
+      d.className = 'slot' + (state.hand === it.id ? ' on' : '') + (build ? ' build' : '');
+      d.dataset.id = it.id;
+      const i = document.createElement('i'); i.textContent = it.n;
+      const b = document.createElement('b'); b.textContent = it.k;
+      d.appendChild(i); d.appendChild(b);
+      g.appendChild(d);
+    }
+    wrap.appendChild(g);
+    return g;
+  };
+
+  /* Slot keys are positional -- slot1 is whatever this mode puts first -- so a
+     duel's three guns sit on 1/2/3 with no gaps where the pickaxe and grenade
+     used to be. The pickaxe also keeps its own quick-draw key, which is the
+     one people actually reach for mid-fight. */
+  const guns = activeLoadout().map((w, i) => {
+    const alt = (w === 'pickaxe' && settings.keys.pickaxe)
+      ? keyName(settings.keys.pickaxe) : bindLabel('slot' + (i + 1));
+    return { k: alt, n: SHORT_NAME[w] || CFG.WEAPONS[w].name.split(' ')[0], id: w };
+  });
+  group('Weapons', guns, false);
+  group('Build', [['wall', 'Wall'], ['ramp', 'Ramp'], ['floor', 'Floor'], ['roof', 'Cone']]
+    .map(([id, n]) => ({ k: bindLabel(id), n, id })), true);
+  focusSlots();
+}
+
+/* Which half of the bar is at full size. Building and shooting are mutually
+   exclusive, so whichever one your hand is on leads and the other recedes. */
+function focusSlots() {
+  const building = isBuildHand(state.hand);
+  const g = $('slots').querySelector('.sgroup.guns');
+  const b = $('slots').querySelector('.sgroup.builds');
+  if (g) g.classList.toggle('lead', !building);
+  if (b) b.classList.toggle('lead', building);
 }
 function killfeed(html) {
   const d = document.createElement('div');
@@ -3328,7 +3607,8 @@ function worldToScreen(p) {
 }
 function damageNumber(dmg, head, world, kind) {
   const d = document.createElement('div');
-  d.className = 'dnum' + (head ? ' head' : '') + (kind === 'piece' ? ' build' : '');
+  d.className = 'dnum' + (head ? ' head' : '') + (kind === 'piece' ? ' build' : '')
+             + (kind === 'farm' ? ' farm' : '');
   d.textContent = (head ? '' : '') + dmg;
   let x = innerWidth / 2, y = innerHeight / 2 - 40;
   if (world) {
@@ -3508,6 +3788,11 @@ function handleMsg(m) {
       startLoop();
       break;
     }
+    case 'arena':
+      // a mode change swapped the map out from under us
+      ARENA = m.arena; SPAWNS = m.spawns;
+      buildArena();
+      break;
     case 'join':
       ensurePlayer(m.p);
       refreshLobby();
@@ -3559,8 +3844,10 @@ function handleMsg(m) {
       showHitmarker(m.head);
       // Builds get a hitmarker and the wall's own damage skin, never a floating
       // number -- those are reserved for players and dummies, so a number on
-      // screen always means you hurt something that can shoot back.
-      if (m.kind !== 'piece') damageNumber(m.dmg, m.head, m.pos, m.kind);
+      // screen always means you hurt something that can shoot back. Farming is
+      // the third case: a gain, not damage, so it reads "+16" in material gold.
+      if (m.kind === 'farm') damageNumber('+' + m.dmg, false, m.pos, 'farm');
+      else if (m.kind !== 'piece') damageNumber(m.dmg, m.head, m.pos, m.kind);
       Audio_.hit(m.head);
       break;
     case 'build':
@@ -3612,7 +3899,8 @@ function handleMsg(m) {
       if (k && m.by !== m.id) k.kills++;
       if (m.id === state.myId) {
         state.dead = true;
-        roundMessage('ELIMINATED', 'by ' + m.kn, 2600);
+        cancelEdit();
+        if (!startKillcam(m.by, m.kn)) roundMessage('ELIMINATED', 'by ' + m.kn, 2600);
       } else if (m.by === state.myId) {
         roundMessage('ELIMINATED ' + m.vn.toUpperCase(), '', 1400);
       }
@@ -3623,6 +3911,7 @@ function handleMsg(m) {
       const rp = state.players.get(m.id);
       if (rp) { rp.alive = true; rp.rpos = m.pos.slice(); }
       if (m.id === state.myId) {
+        stopKillcam();       // you are alive again; the tape stops
         me.pos = m.pos.slice();
         me.vel = [0, 0, 0];
         me.yaw = m.yaw; me.pitch = 0;
@@ -3653,6 +3942,8 @@ function handleMsg(m) {
       break;
     case 'phase':
       state.phase = m.phase;
+      // a round boundary must not leave a replay running over live play
+      if (m.phase !== 'live') stopKillcam();
       if (m.phase === 'live') roundMessage('FIGHT', '', 900);
       break;
     case 'mode':
@@ -3778,7 +4069,8 @@ function enterMatch() {
   $('hud').classList.remove('hidden');
   state.running = true;
   state.dead = false;
-  state.hand = 'ar';
+  // the mode decides what you are holding -- 'ar' is not in every loadout
+  state.hand = activeLoadout()[0];
   drawSlots(); drawAmmo(); drawVitals(); drawMats(); drawTopbar(); drawAim();
   const meRp = state.players.get(state.myId);
   state.spectator = meRp ? meRp.spectator : false;
@@ -3897,6 +4189,7 @@ function onPress(e) {
     return;
   }
   if (e.button === 0) {
+    if (killcam.active) { stopKillcam(); lastClick = 'skipped killcam'; return; }
     if (state.editing) {
       edit.dragging = true;
       // Looking has to stay live while you drag. Without pointer lock the view
@@ -3934,7 +4227,13 @@ function onPress(e) {
 function onRelease(e) {
   if (e.button === 0) {
     dragLook = false;
-    if (state.editing && edit.dragging) { applyEdit(); return; }
+    if (state.editing && edit.dragging) {
+      // In hold mode the EDIT KEY is the commit, not the mouse -- applying here
+      // too would end the edit the moment you paused between strokes.
+      edit.dragging = false;
+      if (!settings.editHold) applyEdit();
+      return;
+    }
     firing = false;
   } else if (e.button === 2) state.ads = false;
 }
@@ -4002,14 +4301,18 @@ $('c').addEventListener('pointerdown', (e) => { e.preventDefault(); });
 addEventListener('contextmenu', (e) => e.preventDefault());
 addEventListener('wheel', (e) => {
   if (!state.running || state.paused) return;
-  const i = CFG.LOADOUT.indexOf(state.hand);
-  const n = CFG.LOADOUT.length;
-  const j = i < 0 ? 1 : (i + (e.deltaY > 0 ? 1 : n - 1)) % n;
-  setHand(CFG.LOADOUT[j]);
+  // the ACTIVE loadout: cycling onto a weapon this mode removed would be a
+  // scroll that does nothing, because setHand() refuses it
+  const lo = activeLoadout();
+  const i = lo.indexOf(state.hand);
+  const n = lo.length;
+  const j = i < 0 ? 0 : (i + (e.deltaY > 0 ? 1 : n - 1)) % n;
+  setHand(lo[j]);
 }, { passive: true });
 
 function setHand(h) {
   if (state.hand === h) return;
+  if (!isBuildHand(h) && !canUse(h)) return;    // not in this mode's loadout
   state.hand = h;
   state.reloading = null;
   if (isBuildHand(h)) state.ads = false;
@@ -4077,6 +4380,19 @@ addEventListener('keydown', (e) => {
   }
   if (act === 'scores') { $('board').classList.remove('hidden'); drawBoard(); return; }
   if (act === 'edit') {
+    /* Two ways to edit, because they suit different hands.
+
+       Toggle (default): press to enter, drag with the mouse, release the mouse
+       to apply -- press again on an already-edited piece to reset it.
+
+       Hold: the edit key is DOWN for the whole gesture and releasing it is what
+       applies. That is one motion instead of three, which is why it is what
+       anyone playing this seriously ends up using, but it also means the key
+       repeat has to be ignored or every repeat restarts the edit. */
+    if (settings.editHold) {
+      if (!e.repeat && !state.editing) startEdit();
+      return;
+    }
     if (state.editing) {
       const rec = pieces.get(edit.key);
       if (rec && rec.mask !== fullMask(rec.type)) resetEdit(); else cancelEdit();
@@ -4088,17 +4404,29 @@ addEventListener('keydown', (e) => {
     setHand(act); return;
   }
   if (act && act.indexOf('slot') === 0) {
-    const w = CFG.LOADOUT[parseInt(act.slice(4), 10) - 1];
+    const w = activeLoadout()[parseInt(act.slice(4), 10) - 1];
     if (w) setHand(w);
     return;
   }
   if (act === 'reload') { autoReload(); return; }
-  if (act === 'grenade') { throwGrenade(); return; }
+  if (act === 'rotate') { rotateBuild(1); return; }
+  if (act === 'pickaxe') { setHand('pickaxe'); return; }
 });
 addEventListener('keyup', (e) => {
   const k = e.key.toLowerCase();
   keys[k] = false;
-  if (keyAction[k] === 'scores') $('board').classList.add('hidden');
+  const act = keyAction[k];
+  if (act === 'scores') $('board').classList.add('hidden');
+  /* Hold-to-edit: letting go is the commit. An empty selection on a piece that
+     is already edited means "put it back" -- the same thing a second press
+     means in toggle mode -- and on an untouched piece it just backs out. */
+  if (act === 'edit' && settings.editHold && state.editing) {
+    if (edit.sel) applyEdit();
+    else {
+      const rec = pieces.get(edit.key);
+      if (rec && rec.mask !== fullMask(rec.type)) resetEdit(); else cancelEdit();
+    }
+  }
 });
 /* Losing the window with a key or a mouse button held must not leave it held
    forever -- and clearing `firing` alone is not enough, because the button
@@ -4137,11 +4465,18 @@ function frame(now) {
   }
 
   if (state.running) {
-    updateCamera(dt);
-    updateGhost();
-    updateEdit();
-    updateAimInfo();
-    sampleRemote(dt);
+    /* A killcam owns both the camera and the snapshot clock, so the live
+       versions of each are skipped rather than run and overwritten -- running
+       both would fight for the camera every frame. */
+    if (killcam.active) {
+      updateKillcam(dt);
+    } else {
+      updateCamera(dt);
+      updateGhost();
+      updateEdit();
+      updateAimInfo();
+      sampleRemote(dt);
+    }
     updateRemoteVisuals(dt);
     updateFx(dt);
     drawCrosshair();
@@ -4160,7 +4495,7 @@ function frame(now) {
 
     // continuous fire / turbo build
     if (firing && !state.dead && !state.editing && state.phase === 'live') {
-      if (isBuildHand(state.hand)) tryBuild();
+      if (isBuildHand(state.hand)) { if (settings.turbo) tryBuild(); }
       else if (state.hand === 'ar') fire();
     }
 
@@ -4215,6 +4550,24 @@ $('vol').oninput = (e) => {
   Audio_.vol(settings.vol);
   saveSettings();
 };
+/* Play-feel toggles. Turning one off mid-match must not leave the state it
+   drove stuck on -- switching turbo off while the mouse is held would otherwise
+   keep building until you let go, and switching edit-on-release off mid-edit
+   would leave a gesture nothing can finish. */
+function bindToggle(id, key, onChange) {
+  const el = $(id);
+  const paint = () => el.classList.toggle('on', !!settings[key]);
+  el.addEventListener('click', () => {
+    settings[key] = !settings[key];
+    paint();
+    saveSettings();
+    if (onChange) onChange(settings[key]);
+  });
+  paint();
+}
+bindToggle('opt-turbo', 'turbo', (on) => { if (!on) firing = false; });
+bindToggle('opt-edithold', 'editHold', () => { if (state.editing) cancelEdit(); });
+bindToggle('opt-killcam', 'killcam', (on) => { if (!on) stopKillcam(); });
 function drawBinds() {
   const wrap = $('binds');
   wrap.innerHTML = '';
