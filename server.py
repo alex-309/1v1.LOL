@@ -52,6 +52,13 @@ CONFIG = {
     # --- grid / building ---
     "CELL": 4.0,
     "WALL_T": 0.25,          # wall + floor slab thickness
+    "FLOOR_HOLE_PAD": 1.0,   # how far a cut floor quadrant eats into the slabs
+                             # beside it. Climbing a ramp through a hole means
+                             # STEPPING UP under it, and a step needs the whole
+                             # P_W-wide box clear of the slab -- not just the
+                             # leading edge. Pad 0.8 puts the hole exactly on
+                             # the trailing edge and the step fails by a
+                             # rounding epsilon, so: player width plus slack.
     "PIECE_HP": 150.0,
     "PIECE_COST": 10,
     "MAT_CAP": 999,
@@ -400,6 +407,45 @@ def mask_is_rect(bits, rows, cols):
     return len(idx) == (r1 - r0 + 1) * (c1 - c0 + 1)
 
 
+# --- corner cuts -------------------------------------------------------------
+# The other shape a wall edit can make, and the one the games this borrows from
+# lean on hardest. You do NOT have to paint the whole 2x2 corner block: three
+# tiles -- the corner tile, the one beside it and the one above/below it -- are
+# enough, exactly as in 1v1.lol and Fortnite.
+#
+# What comes out is not those three tiles missing. The wall is cut along the
+# diagonal between the two corners you did NOT touch: half of it disappears and
+# what is left is a TRIANGLE. That is why three tiles is the right gesture --
+# the fourth tile of the corner block is already half inside the triangle that
+# survives, so asking for it would be asking for a shape the edit cannot make.
+#
+# Keyed by the bits being CUT -> the corner being opened, as (u, v) with u
+# across the wall (u = c / 2) and v up it (v = (2 - r) / 2).
+WALL_CORNER_CUTS = {
+    0b000001011: (0, 1),    # tiles (0,0) (0,1) (1,0)  -> top-left
+    0b000100110: (1, 1),    # tiles (0,1) (0,2) (1,2)  -> top-right
+    0b011001000: (0, 0),    # tiles (1,0) (2,0) (2,1)  -> bottom-left
+    0b110100000: (1, 0),    # tiles (1,2) (2,1) (2,2)  -> bottom-right
+}
+
+
+def wall_corner_cut(ptype, mask):
+    """The corner a wall mask opens, or None. `mask` is what REMAINS."""
+    if ptype not in ("wallX", "wallZ"):
+        return None
+    return WALL_CORNER_CUTS.get(FULL_MASK & ~mask)
+
+
+def corner_keep(corner, u):
+    """Vertical span (v_lo, v_hi) of the surviving triangle at across-wall `u`.
+
+    The diagonal runs between the two corners the cut did not touch, so cutting
+    a bottom corner leaves the top half and vice versa."""
+    uc, vc = corner
+    edge = (1.0 - u) if uc == vc else u
+    return (edge, 1.0) if vc == 0 else (0.0, edge)
+
+
 def edit_mask_ok(ptype, mask):
     """Validate a requested mask for `ptype`. `mask` is what REMAINS."""
     if ptype not in MASK_GRID:
@@ -412,7 +458,51 @@ def edit_mask_ok(ptype, mask):
         return True                       # reset to unedited
     if mask == 0:
         return False                      # editing is not a way to delete
+    if wall_corner_cut(ptype, mask):
+        return True
     return mask_is_rect(full & ~mask, rows, cols)
+
+
+def sub_rect(a, b):
+    """`a` minus `b`, as up to four rectangles. Each is (x0, x1, z0, z1).
+
+    Used to bite a padded hole out of the floor slabs beside it, which is the
+    one place a surviving tile stops being a whole tile."""
+    ax0, ax1, az0, az1 = a
+    bx0, bx1, bz0, bz1 = b
+    if bx1 <= ax0 or bx0 >= ax1 or bz1 <= az0 or bz0 >= az1:
+        return [a]                        # no overlap, `a` survives whole
+    out = []
+    if bx0 > ax0:
+        out.append((ax0, bx0, az0, az1))              # strip left of the hole
+    if bx1 < ax1:
+        out.append((bx1, ax1, az0, az1))              # strip right of it
+    mx0, mx1 = max(ax0, bx0), min(ax1, bx1)
+    if bz0 > az0:
+        out.append((mx0, mx1, az0, bz0))              # strip below it
+    if bz1 < az1:
+        out.append((mx0, mx1, bz1, az1))              # strip above it
+    return [r for r in out if r[1] - r[0] > 1e-6 and r[3] - r[2] > 1e-6]
+
+
+def floor_hole(mask, x0, z0):
+    """The padded opening a floor mask cuts, as (x0, x1, z0, z1), or None.
+
+    The cut quadrants are a rectangle (edit_mask_ok() saw to that), so the
+    opening is one rectangle too -- grown by FLOOR_HOLE_PAD into the slabs
+    beside it, but never past the edge of the piece."""
+    gone = [i for i in range(4) if not (mask >> i) & 1]
+    if not gone:
+        return None
+    half = CELL / 2.0
+    pad = CONFIG["FLOOR_HOLE_PAD"]
+    rs = [i // 2 for i in gone]
+    cs = [i % 2 for i in gone]
+    hx0 = max(x0, x0 + min(cs) * half - pad)
+    hx1 = min(x0 + CELL, x0 + (max(cs) + 1) * half + pad)
+    hz0 = max(z0, z0 + min(rs) * half - pad)
+    hz1 = min(z0 + CELL, z0 + (max(rs) + 1) * half + pad)
+    return (hx0, hx1, hz0, hz1)
 
 
 def canon_wall(cx, cy, cz, direction):
@@ -462,6 +552,28 @@ def tile_boxes(ptype, cx, cy, cz, direction, mask):
     out = []
 
     if ptype in ("wallX", "wallZ"):
+        corner = wall_corner_cut(ptype, mask)
+        if corner:
+            # A corner cut is a diagonal, and a diagonal has no tiles. It
+            # renders as a real triangle and collides as a staircase of thin
+            # columns sampled down the middle of each one, so the two never
+            # drift by more than half a column -- the same render-smooth /
+            # collide-boxy split a ramp already uses.
+            cols_n = 8
+            step = CELL / cols_n
+            for i in range(cols_n):
+                v_lo, v_hi = corner_keep(corner, (i + 0.5) / cols_n)
+                if v_hi - v_lo < 1e-6:
+                    continue
+                ylo, yhi = y0 + v_lo * CELL, y0 + v_hi * CELL
+                ulo, uhi = i * step, (i + 1) * step
+                if ptype == "wallX":
+                    out.append(Box([x0 - WALL_T / 2, ylo, z0 + ulo],
+                                   [x0 + WALL_T / 2, yhi, z0 + uhi], "piece"))
+                else:
+                    out.append(Box([x0 + ulo, ylo, z0 - WALL_T / 2],
+                                   [x0 + uhi, yhi, z0 + WALL_T / 2], "piece"))
+            return out
         third = CELL / 3.0
         for r in range(3):          # r=0 is the top row
             for c in range(3):
@@ -481,13 +593,20 @@ def tile_boxes(ptype, cx, cy, cz, direction, mask):
 
     if ptype == "floor":
         half = CELL / 2.0
+        hole = floor_hole(mask, x0, z0)
         for r in range(2):          # r spans Z, c spans X
             for c in range(2):
                 if not (mask >> (r * 2 + c)) & 1:
                     continue
-                out.append(Box([x0 + c * half, y0 - WALL_T / 2, z0 + r * half],
-                               [x0 + (c + 1) * half, y0 + WALL_T / 2, z0 + (r + 1) * half],
-                               "piece"))
+                quad = (x0 + c * half, x0 + (c + 1) * half,
+                        z0 + r * half, z0 + (r + 1) * half)
+                # the surviving quadrants pull back from the hole, so what you
+                # climb through is FLOOR_HOLE_PAD wider than the quadrant you
+                # cut. A slab trimmed on two sides is an L, hence sub_rect().
+                for qx0, qx1, qz0, qz1 in (sub_rect(quad, hole) if hole
+                                           else [quad]):
+                    out.append(Box([qx0, y0 - WALL_T / 2, qz0],
+                                   [qx1, y0 + WALL_T / 2, qz1], "piece"))
         return out
 
     if ptype == "ramp":
@@ -651,6 +770,27 @@ def move_axis(pos, crouch, delta, axis, boxes):
     return hit
 
 
+def _step_rise(pos, crouch, boxes, max_rise):
+    """Smallest lift that frees the player box at `pos`, or None inside max_rise.
+
+    Stepping by the whole of STEP_UP regardless of how tall the step actually
+    is costs headroom nobody asked to spend: a 0.5 ramp tread under a ceiling
+    2.4 up would be probed at 0.6, the probe would clip the ceiling, and the
+    player would stop dead on a step they fit through. Ask the obstacle how
+    high it is instead."""
+    lift = 0.0
+    for _ in range(4):
+        lo, hi = player_aabb([pos[0], pos[1] + lift, pos[2]], crouch)
+        b = _overlap_any(lo, hi, boxes)
+        if b is None:
+            return lift
+        need = b.hi[1] + 1e-3 - pos[1]
+        if need <= lift or need > max_rise:
+            return None
+        lift = need
+    return None
+
+
 def unstick(pos, crouch, boxes):
     """Last line of defence against ending up inside the world.
 
@@ -694,13 +834,18 @@ def step_move(pos, vel, crouch, grounded, dt, boxes):
         blocked = move_axis(pos, crouch, d, axis, boxes)
         # Step-up only when grounded, or players climb sheer walls by jumping.
         if blocked and grounded:
+            target = list(pos)
+            target[axis] = before + d
+            rise = _step_rise(target, crouch, boxes, step_up)
+            if rise is None:
+                continue
             trial = list(pos)
             trial[axis] = before
-            trial[1] += step_up
+            trial[1] += rise
             if _overlap_any(*player_aabb(trial, crouch), boxes=boxes) is None:
                 if not move_axis(trial, crouch, d, axis, boxes):
                     down = list(trial)
-                    move_axis(down, crouch, -step_up, 1, boxes)
+                    move_axis(down, crouch, -rise, 1, boxes)
                     pos[0], pos[1], pos[2] = down
     return grounded, landed
 

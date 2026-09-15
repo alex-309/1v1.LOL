@@ -216,9 +216,24 @@ piece:
 | Piece | Grid | What a picked tile does |
 |---|---|---|
 | Wall | 3×3 | Cuts the tile out — window, door, doorway, half wall, side opening |
-| Floor | 2×2 | Cuts that quadrant out, so you can drop through it |
+| Floor | 2×2 | Cuts that quadrant out, so you can drop through it — or climb a ramp up through it |
 | Cone | 2×2 | Cuts that quarter of the cone away |
 | Ramp | 2×2 | *Raises* that quarter into a flat landing at half height |
+
+**Corner cuts.** A wall has one shape that isn't a rectangle, and it's the one
+this genre leans on hardest. Pick three tiles around a corner — the corner tile,
+the one beside it and the one above or below it — and the wall is cut along the
+diagonal between the two corners you *didn't* touch. Half of it disappears and
+what's left is a triangle, so a bottom corner cut opens a gap you can walk
+straight through while the other half still covers you. You don't have to paint
+the fourth tile of the corner block: it is already half inside the triangle that
+survives.
+
+A cut floor quadrant eats `FLOOR_HOLE_PAD` into the slabs beside it rather than
+stopping dead at the quadrant line. That is not decoration — climbing a ramp up
+through a hole means *stepping up* underneath it, and a step needs the player's
+whole box clear of the slab, not just its leading edge. At exactly one quadrant
+the hole is the same width as the player and nobody gets through.
 
 Ramp edits are the interesting ones. Cut the low half and the ramp starts
 halfway up with a landing in front of it; cut the high half and it climbs to the
@@ -226,8 +241,8 @@ middle and levels off; cut one side and you get a half-width ramp with a
 platform running alongside.
 
 **Only real edits go through.** Your picked tiles have to form a solid
-rectangle, which is what every edit in this genre actually is — a scattered
-diagonal pick is refused and drops back to an empty selection rather than
+rectangle, or one of the four wall corner cuts above — between them that is
+every edit this genre actually has. A scattered diagonal pick is refused and drops back to an empty selection rather than
 cutting a shape the game doesn't have. The prompt under the crosshair names what
 you are about to make. You also cannot edit a piece away entirely; that's what
 the pickaxe is for.
