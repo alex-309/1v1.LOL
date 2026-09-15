@@ -143,7 +143,7 @@ no code changes at all.
 | `Z` `X` `C` `V` | Wall · Ramp · Floor · Cone |
 | `F` | Edit a piece you built — wall, floor, ramp or cone (press again on an edited piece to reset it) |
 | `R` | Reload |
-| `T` | Rotate the ramp or cone you are holding |
+| `T` | Rotate the ramp or cone you are holding &middot; free-cam toggle while spectating |
 | Left mouse | Fire, or place a build piece (hold to turbo-build) |
 | Right mouse | Aim down sights |
 | `Tab` | Scoreboard · `Enter` chat · `Esc` pause |
@@ -156,6 +156,7 @@ preference rather than balance:
 |---|---|---|
 | **Turbo build** | on | Hold left mouse to keep placing. Off means one click, one piece. |
 | **Edit on release** | off | Hold the edit key, drag, let go to apply — one motion instead of three. Off keeps the press-to-enter / press-to-reset toggle. |
+| **First person** | off | Camera at the eye with a viewmodel. Third person is easier to build in, which is why this is a switch and not a replacement. |
 | **Killcam** | on | On death, replay the last 2.6s from your killer's view. Click to skip. |
 
 Every key is rebindable in the pause menu (`Esc`), and there are **three
@@ -207,6 +208,18 @@ everything it was carrying falls with it.
 cone under you puts you on top of it — never underneath, and never through the
 map. A wall placed on you shoves you along the wall's own facing, to whichever
 side you were already heading; it never throws you sideways.
+
+**Walls reach as far as everything else.** A wall lives on the edge *between*
+two boxes rather than in one, and it used to count as in reach when either of
+those boxes was — a whole box more range than a floor. It now uses the same
+circle, so the furthest wall you can place is one floor tile closer than it was.
+Walls are the piece you throw out under pressure, and the extra box let you seal
+off ground you had no business holding.
+
+**On a phone or tablet** the game mounts a left stick, a look area and a button
+pad — but only where touch is actually reported. They route through the same
+`keys[]` table and the same press/release handlers the mouse and keyboard use,
+so there is no second input path to keep in step.
 
 **Rotation.** `T` turns a held ramp or cone by a quarter turn, so you can lay a
 ramp across your path instead of along it — the one orientation you cannot get
@@ -286,6 +299,21 @@ doesn't have. The prompt under the crosshair names what
 you are about to make. You also cannot edit a piece away entirely; that's what
 the pickaxe is for.
 
+**You fight by ear.** Footsteps are positional — distance attenuation and a
+stereo pan taken from where the sound sits relative to your camera — and so are
+other people's builds, breaks and edits. Crouching is quieter *and* duller, so
+it actually buys you something. Your own steps play at half volume, because you
+cannot judge how loud you are to someone else without hearing your own stride.
+Low health is a heartbeat that quickens rather than a beep, so it registers
+without competing with the footsteps you are straining to hear.
+
+**Dropped connections are survivable.** A lost socket parks you rather than
+removing you: your slot, score, builds, health, materials and magazine are all
+held for `REJOIN_GRACE` seconds while the client retries with backoff. Come back
+inside that window and you walk into the same slot mid-match. Down at the socket
+a dropped connection and someone quitting look identical, and only one of them
+should cost a match.
+
 **Shots are lag-compensated.** You do not see the present: remote players are
 drawn 100ms behind the newest snapshot, and that snapshot already cost a network
 trip. So every shot carries the server timestamp the client was *rendering* when
@@ -295,6 +323,20 @@ shooting behind them. The rewind is clamped to 260ms — enough for the
 interpolation delay plus a round trip on a bad connection, and no more, since an
 unbounded rewind is an invitation to ask to shoot at where someone stood a minute
 ago. The shooter is never rewound; they see themselves in the present.
+
+**Spectating** has two cameras, because the two things you want are different:
+*follow* rides whoever is playing (click to switch), *free* is a flying camera
+you steer yourself (`T` toggles). Follow is the killcam rig pointed at a live
+player; free is the local controller with gravity and collision switched off.
+
+**Stats.** Kills and deaths say who won; accuracy, damage, pieces built and
+materials farmed say how. Accuracy is counted per *trigger pull*, not per
+pellet — a shotgun that lands two pellets of nine hit its target, and scoring
+that as 22% would be a lie about what happened. Damage is credited as what
+actually landed, so overkill on someone with 3hp left is 3 damage. The
+intermission between rounds shows the running numbers; the end card shows the
+match. Your lifetime record lives in `localStorage` and is shown on the menu —
+it is never sent anywhere.
 
 **Killcam.** Die and you watch your last 2.6 seconds from over your killer's
 shoulder. It costs nothing on the wire: the snapshot buffer already holds every
@@ -314,15 +356,38 @@ backwards with the camera parented somewhere else. Click to skip, or turn it off
   Every kill wipes all builds, fully heals both players and respawns them at
   opposite ends. Needs exactly two participants; add a bot if your friend isn't
   around.
+- **Team Fight** — 2v2 (up to 4v4) rounds on **Towers**, a vertical map where
+  the useful ground is all above you and the only way onto it is to build. No
+  friendly fire, and the round ends when a whole side is down rather than on
+  the first kill — the 2-on-1 after a trade is the entire reason to play with a
+  partner. First to 5 rounds. Needs 3+.
 - **Deathmatch** — respawn after 3 seconds, builds persist, first to 15. Any
   number of players and bots.
+- **Build Trainer** — timed courses of gates you can only reach by building,
+  scored the way the aim trainer is: a clock, a best time, nothing else. Three
+  courses (Ramp Rush, Tower, Bridge), infinite materials, switch course from the
+  pause menu. Everyone runs the same course at once on their own clock.
 - **Build** — sandbox. Infinite materials, no incoming damage, dummies to break.
 - **Aim Trainer** — pop-up targets on a timer, with accuracy, reaction time and
   a running score.
 
-The first person to connect is the host and picks the mode. Bots come in Easy,
-Medium and Hard, which tune reaction time, accuracy, build reflex and how hard
-they push.
+The first person to connect is the host, picks the mode, and can override the
+map — Open Yard, Box Fight or Towers — or leave it on Auto for whatever the mode
+wants.
+
+**Bots have a difficulty and a style, and they are separate questions.**
+Difficulty (Easy / Medium / Hard) tunes reaction time, accuracy and build
+reflex. Style changes what the bot is *trying* to do, which is the part you
+actually practise against:
+
+| Style | Plays like |
+|---|---|
+| **Balanced** | The old bot — trades at mid range, walls when hurt. |
+| **Rusher** | Lives in your face and barely builds. Teaches you to hold an angle. |
+| **Turtle** | Will not come off its wall and rebuilds constantly. Teaches you to break builds. |
+| **Builder** | Takes height at every opportunity. Teaches you to fight someone above you. |
+
+A hard Turtle and a hard Rusher are completely different opponents.
 
 ---
 

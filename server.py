@@ -29,6 +29,7 @@ import sys
 import threading
 import time
 import traceback
+import uuid
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
@@ -65,6 +66,7 @@ CONFIG = {
     "MAT_START": 500,
     "MAT_REGEN": 12.0,       # per second
     "MAT_REGEN_DELAY": 3.0,  # seconds after your last placement
+    "REJOIN_GRACE": 45.0,    # seconds a dropped player's slot is held open
     "LAG_COMP_MS": 260,      # furthest a shot may rewind other players. Covers
                              # the client's 100ms interpolation delay plus a
                              # round trip on a bad connection, and no more --
@@ -128,6 +130,8 @@ CONFIG = {
     "ROUND_COUNTDOWN": 3.0,
     "DUEL_TARGET": 5,
     "DM_TARGET": 15,
+    "TEAM_TARGET": 5,        # rounds to win a 2v2
+
 
     # --- camera ---
     "FOV": 75.0,
@@ -189,8 +193,45 @@ CONFIG = {
         "medium": {"react": 0.22, "err": 0.035, "turn": 5.5, "build_cd": 1.1, "push": 0.55, "burst": 7},
         "hard":   {"react": 0.11, "err": 0.014, "turn": 9.0, "build_cd": 0.55, "push": 0.85, "burst": 12},
     },
+    # A difficulty dial only makes the same bot faster. A personality changes
+    # what it is TRYING to do, which is the part you actually practise against:
+    # a turtle teaches you to break builds, a rusher teaches you to hold an
+    # angle, a builder teaches you to fight someone above you. Multipliers on
+    # the difficulty numbers, so the two axes stay independent.
+    "BOT_STYLE": {
+        "balanced": {"label": "Balanced", "push": 1.0, "build": 1.0, "range": 1.0,
+                     "ramp": 0.35, "wall_first": 0.5, "retreat": 0.35},
+        "rusher":   {"label": "Rusher", "push": 2.2, "build": 0.55, "range": 0.5,
+                     "ramp": 0.1, "wall_first": 0.15, "retreat": 0.05},
+        "turtle":   {"label": "Turtle", "push": 0.15, "build": 1.9, "range": 1.6,
+                     "ramp": 0.2, "wall_first": 0.95, "retreat": 0.85},
+        "builder":  {"label": "Builder", "push": 0.7, "build": 2.4, "range": 1.1,
+                     "ramp": 0.85, "wall_first": 0.4, "retreat": 0.5},
+    },
 
     "AIM_TRAINER": {"lifetime": 2.6, "gap": 0.35, "count": 3, "radius": 0.55},
+    # BUILD TRAINER -- courses of checkpoints you can only reach by building.
+    # Scored the way the aim trainer is scored: a clock, a best time, and
+    # nothing else. Each course is a list of [x, y, z] gates, and the heights
+    # are chosen so no gate is reachable by jumping -- the only way up is a
+    # ramp, and the only way across a gap is a floor.
+    "BUILD_TRAINER": {
+        "radius": 2.2,           # how close counts as through the gate
+        "courses": {
+            "ramp": {"label": "Ramp Rush",
+                     "desc": "Straight up. Ramps only, as fast as you can.",
+                     "gates": [[0, 4, -6], [0, 8, -12], [0, 12, -18],
+                               [0, 16, -24], [0, 20, -30]]},
+            "tower": {"label": "Tower",
+                      "desc": "Box up and climb. Turns at every level.",
+                      "gates": [[0, 4, -5], [6, 8, -5], [6, 12, 1],
+                                [0, 16, 1], [0, 20, -5]]},
+            "bridge": {"label": "Bridge",
+                       "desc": "Across, not up. Floors over open ground.",
+                       "gates": [[0, 4, -8], [10, 4, -16], [-2, 8, -24],
+                                 [-14, 8, -16], [-14, 12, -4]]},
+        },
+    },
     "DUMMY_HP": 100.0,
     "DUMMY_SHIELD": 100.0,
     "DUMMY_RESPAWN": 4.0,
@@ -271,13 +312,52 @@ BOX_SPAWNS = [
     [20.0, 0.5, 0.0, 270.0],
 ]
 
-# Which layout each mode plays on. A duel gets the box; everything else gets
-# the open arena it was built for.
+# ---------------------------------------------------------------------------
+# TOWERS -- the vertical map.
+#
+# The box is a ground fight with a roof on it; this is the opposite. Four
+# stepped towers at the corners and a tall spine down the middle mean the
+# useful ground is all above you, and the only way onto it is to build. It is
+# wider than the box because a 2v2 needs room for two fights at once.
+# ---------------------------------------------------------------------------
+TOWER_ARENA = [
+    [0, -1.0, 0, 64, 2.0, 64, "ground"],
+    # perimeter, lower than the box: getting out is not the problem here
+    [0, 3.0, -32.0, 64, 6.0, 2.0, "lip"],
+    [0, 3.0, 32.0, 64, 6.0, 2.0, "lip"],
+    [-32.0, 3.0, 0, 2.0, 6.0, 64, "lip"],
+    [32.0, 3.0, 0, 2.0, 6.0, 64, "lip"],
+    # centre spine -- tall and thin, so it splits the map without being cover
+    [0, 5.0, 0, 4, 10.0, 20, "pillar"],
+    # four stepped corner towers: each is two blocks you can ramp between
+    [-18, 2.0, -18, 10, 4.0, 10, "crate"],
+    [-18, 4.0, -18, 5, 8.0, 5, "pillar"],
+    [18, 2.0, 18, 10, 4.0, 10, "crate"],
+    [18, 4.0, 18, 5, 8.0, 5, "pillar"],
+    [18, 2.0, -18, 10, 4.0, 10, "crate"],
+    [18, 4.0, -18, 5, 8.0, 5, "pillar"],
+    [-18, 2.0, 18, 10, 4.0, 10, "crate"],
+    [-18, 4.0, 18, 5, 8.0, 5, "pillar"],
+]
+
+TOWER_SPAWNS = [
+    [0.0, 0.5, -27.0, 0.0],
+    [0.0, 0.5, 27.0, 180.0],
+    [-27.0, 0.5, 0.0, 90.0],
+    [27.0, 0.5, 0.0, 270.0],
+    [-24.0, 0.5, -24.0, 45.0],
+    [24.0, 0.5, 24.0, 225.0],
+]
+
+# Which layout each mode plays on by default. The host can override it from the
+# lobby; "auto" means "whatever this mode wants".
 ARENAS = {
     "open": (OPEN_ARENA, OPEN_SPAWNS),
     "box": (BOX_ARENA, BOX_SPAWNS),
+    "towers": (TOWER_ARENA, TOWER_SPAWNS),
 }
-MODE_ARENA = {"duel": "box"}
+ARENA_NAMES = {"open": "Open Yard", "box": "Box Fight", "towers": "Towers"}
+MODE_ARENA = {"duel": "box", "team": "towers", "trainer": "open"}
 
 # The layout currently loaded. Rebound by load_arena() whenever a match starts,
 # which is also what rebuilds ARENA_BOXES -- every collision path reads that
@@ -589,6 +669,23 @@ def floor_hole(mask, x0, z0):
     hz0 = max(z0, z0 + min(rs) * half - pad)
     hz1 = min(z0 + CELL, z0 + (max(rs) + 1) * half + pad)
     return (hx0, hx1, hz0, hz1)
+
+
+# Modes that run in rounds with two sides rather than free-for-all.
+TEAM_MODES = ("team",)
+ROUND_MODES = ("duel", "team")
+
+
+def is_team(mode):
+    return mode in TEAM_MODES
+
+
+def target_for(mode):
+    if mode == "duel":
+        return CONFIG["DUEL_TARGET"]
+    if mode == "team":
+        return CONFIG["TEAM_TARGET"]
+    return CONFIG["DM_TARGET"]
 
 
 def loadout_for(mode):
@@ -1130,17 +1227,20 @@ class Game(object):
         self.phase = "lobby"       # lobby | countdown | live | ended
         self.phase_until = 0.0
         self.round_no = 0
+        self.team_score = [0, 0]      # rounds won, only used by team modes
+        self.map_choice = "auto"      # host override; "auto" = the mode's own
         self.tick = 0
         self.aim_stats = {}
         self.aim_next = 0.0
         self.winner = None
 
     # -- helpers ----------------------------------------------------------
-    def new_player(self, name, is_bot=False, diff="medium"):
+    def new_player(self, name, is_bot=False, diff="medium", style="balanced"):
         pid = self.next_id
         self.next_id += 1
         p = {
             "id": pid, "name": name, "bot": is_bot, "diff": diff,
+            "style": style if style in CONFIG["BOT_STYLE"] else "balanced",
             "pos": [0.0, 1.0, 0.0], "vel": [0.0, 0.0, 0.0],
             "yaw": 0.0, "pitch": 0.0, "crouch": False, "grounded": True,
             "hp": CONFIG["HP_MAX"], "shield": CONFIG["SHIELD_MAX"],
@@ -1149,9 +1249,22 @@ class Game(object):
             "ammo": {w: CONFIG["WEAPONS"][w]["mag"] for w in CONFIG["LOADOUT"]},
             "last_shot": {}, "reload_until": 0.0, "reloading": None,
             "kills": 0, "deaths": 0,
+            # Match stats. Kills and deaths alone say who won but nothing about
+            # HOW, and the aim trainer already proves the readout is worth
+            # having. Accuracy is counted per TRIGGER PULL, not per pellet --
+            # a shotgun that lands two pellets of nine hit its target, and
+            # scoring it as 22% would be a lie about what happened.
+            "st": {"shots": 0, "hits": 0, "dmg": 0.0, "built": 0,
+                   "farmed": 0, "best": 0.0},
             "respawn_at": 0.0, "protect_until": 0.0, "last_build": 0.0,
             "last_dmg_from": None, "last_dmg_at": 0.0,
             "hist": [],                 # (server ms, pos, crouch) for rewinds
+            # Rejoining. A dropped connection is not a player leaving: the slot,
+            # the score and the builds all stay put until the grace runs out.
+            "token": uuid.uuid4().hex,
+            "offline_since": 0.0,
+            "team": 0,                  # only meaningful in a team mode
+            "tr": None,                 # build-trainer run state
             # bot-only scratch
             "bt": {"state": "IDLE", "target": None, "next_fire": 0.0,
                    "next_build": 0.0, "stuck_t": 0.0, "last_pos": [0, 0, 0],
@@ -1164,7 +1277,8 @@ class Game(object):
         return {"id": p["id"], "name": p["name"], "bot": p["bot"],
                 "hp": p["hp"], "shield": p["shield"], "alive": p["alive"],
                 "kills": p["kills"], "deaths": p["deaths"],
-                "spectator": p["spectator"], "pos": p["pos"], "yaw": p["yaw"]}
+                "spectator": p["spectator"], "pos": p["pos"], "yaw": p["yaw"],
+                "offline": bool(p["offline_since"]), "team": p["team"]}
 
     def broadcast(self, msg, droppable=False, exclude=None):
         for pid, c in list(self.clients.items()):
@@ -1413,9 +1527,13 @@ class Game(object):
 
         Ramps are a stride, not a throw: one in front, or the box you stand in.
 
-        A wall does not live IN a box, it lives on the edge BETWEEN two, so an
-        edge counts as in reach when either of its boxes is. That is what lets
-        you wall the far side of the furthest floor you can place."""
+        A wall lives on the edge BETWEEN two boxes rather than in one, and it
+        used to count as in reach when EITHER of those boxes was -- which gave
+        walls a full box more range than everything else. They now use the same
+        circle as the rest, so the furthest wall you can place is one floor tile
+        closer than it was. Walls are the piece you throw out under pressure and
+        the extra box of reach let you seal off ground you had no business
+        holding."""
         bx = int(math.floor(p["pos"][0] / CELL))
         by = int(math.floor((p["pos"][1] + 0.05) / CELL))
         bz = int(math.floor(p["pos"][2] / CELL))
@@ -1432,12 +1550,7 @@ class Game(object):
             # feet. You aim at a cell and turn the ramp inside it; those are two
             # separate things.
             return abs(dx) + abs(dz) <= 1
-        if dx * dx + dz * dz <= r * r:
-            return True
-        if ptype == "wall":
-            ax, az = dx + step[0], dz + step[1]
-            return ax * ax + az * az <= r * r
-        return False
+        return dx * dx + dz * dz <= r * r
 
     def build_sight_boxes(self, p):
         """Collision for the build line-of-sight test, minus your OWN pieces.
@@ -1551,7 +1664,7 @@ class Game(object):
         if ptype in ("ramp", "roof") and self.cell_volume_taken(cx, cy, cz):
             return None
 
-        infinite = (self.mode == "build")
+        infinite = self.mode in ("build", "trainer")
         cost = CONFIG["PIECE_COST"]
         if not infinite and p["mats"] < cost:
             return None
@@ -1598,6 +1711,7 @@ class Game(object):
         self.piece_order.append(key)
         if not infinite:
             p["mats"] -= cost
+        p["st"]["built"] += 1
         p["last_build"] = now
         self.broadcast({"t": "build", "p": self.wire_piece(pc)})
         self.send_to(p["id"], {"t": "you", "mats": p["mats"]})
@@ -1673,8 +1787,24 @@ class Game(object):
             return
         if time.time() < target["protect_until"]:
             return
-        if self.mode == "build":
+        if self.mode in ("build", "trainer"):
             return
+        # No friendly fire. A teammate's wall is still breakable -- that is a
+        # build game and sometimes the wall in your way is theirs -- but a
+        # teammate is not, and grenades in particular would be unplayable.
+        if is_team(self.mode) and by_pid != target["id"]:
+            src = self.players.get(by_pid)
+            if src and src["team"] == target["team"]:
+                return
+        # Credit the damage that actually lands, not what was rolled: overkill
+        # on a player with 3hp left is 3 damage, and counting the full swing
+        # would make the readout flattering rather than true.
+        dealt = min(amount, target["shield"] + max(0.0, target["hp"]))
+        killer = self.players.get(by_pid)
+        if killer and killer is not target:
+            killer["st"]["dmg"] += dealt
+            if dealt > killer["st"]["best"]:
+                killer["st"]["best"] = dealt
         shield = target["shield"]
         if shield > 0:
             used = min(shield, amount)
@@ -1697,6 +1827,7 @@ class Game(object):
         killer = self.players.get(by_pid)
         if killer and killer is not target:
             killer["kills"] += 1
+        self._last_round_winner = by_pid if (killer and killer is not target) else None
         self.broadcast({"t": "die", "id": target["id"], "by": by_pid,
                         "kn": killer["name"] if killer else "the void",
                         "vn": target["name"]})
@@ -1704,14 +1835,46 @@ class Game(object):
                                             for p in self.players.values()}})
         if self.mode == "duel":
             self.end_round()
+        elif is_team(self.mode):
+            # A team round ends when one side is entirely down, not on the
+            # first kill -- the 2-on-1 that follows a trade is the whole reason
+            # to play with a partner.
+            if self.team_wiped() is not None:
+                self.end_round()
         else:
             target["respawn_at"] = time.time() + CONFIG["RESPAWN_TIME"]
         self.check_win()
 
+    def team_wiped(self):
+        """The team that has just been eliminated, or None."""
+        alive = {0: 0, 1: 0}
+        for p in self.participants():
+            if p["alive"]:
+                alive[p["team"]] = alive.get(p["team"], 0) + 1
+        if alive[0] and alive[1]:
+            return None
+        if not alive[0] and not alive[1]:
+            return None                     # a mutual wipe scores for nobody
+        return 0 if not alive[0] else 1
+
     def check_win(self):
         if self.phase == "ended":
             return
-        goal = CONFIG["DUEL_TARGET"] if self.mode == "duel" else CONFIG["DM_TARGET"]
+        goal = target_for(self.mode)
+        if is_team(self.mode):
+            for side in (0, 1):
+                if self.team_score[side] >= goal:
+                    self.phase = "ended"
+                    self.winner = side
+                    names = [q["name"] for q in self.participants()
+                             if q["team"] == side]
+                    self.broadcast({"t": "matchend", "winner": None,
+                                    "team": side, "teams": self.team_score,
+                                    "name": " & ".join(names) or ("Team " + str(side + 1)),
+                                    "s": [self.wire_stats(q)
+                                          for q in self.players.values()]})
+                    return
+            return
         if self.mode not in ("duel", "dm"):
             return
         for p in self.players.values():
@@ -1720,13 +1883,37 @@ class Game(object):
                 self.winner = p["id"]
                 self.broadcast({"t": "matchend", "winner": p["id"],
                                 "name": p["name"],
-                                "s": [{"id": q["id"], "name": q["name"],
-                                       "kills": q["kills"], "deaths": q["deaths"]}
+                                "s": [self.wire_stats(q)
                                       for q in self.players.values()]})
                 return
 
+    def wire_stats(self, q):
+        st = q["st"]
+        acc = (100.0 * st["hits"] / st["shots"]) if st["shots"] else 0.0
+        return {"id": q["id"], "name": q["name"], "bot": q["bot"],
+                "kills": q["kills"], "deaths": q["deaths"],
+                "acc": round(acc, 1), "shots": st["shots"], "hits": st["hits"],
+                "dmg": round(st["dmg"]), "built": st["built"],
+                "farmed": st["farmed"], "best": round(st["best"])}
+
+    def reset_stats(self):
+        for q in self.players.values():
+            q["st"] = {"shots": 0, "hits": 0, "dmg": 0.0, "built": 0,
+                       "farmed": 0, "best": 0.0}
+
     def participants(self):
-        return [p for p in self.players.values() if not p["spectator"]]
+        # A parked player is still in the match -- they keep their slot and
+        # their score -- but they are not someone a round can wait on or that
+        # a duel can be won against, so they do not count while they are away.
+        return [p for p in self.players.values()
+                if not p["spectator"] and not p["offline_since"]]
+
+    def team_spawn_index(self, p):
+        """Teams start at opposite ends. The spawn list alternates sides, so
+        stepping by two keeps a team together and the other team across."""
+        mates = [q for q in self.participants() if q["team"] == p["team"]]
+        slot = mates.index(p) if p in mates else 0
+        return (p["team"] + slot * 2) % max(1, len(SPAWNS))
 
     def spawn(self, p, index=None):
         parts = [q for q in self.participants() if q is not p and q["alive"]]
@@ -1771,19 +1958,37 @@ class Game(object):
         self.piece_order = []
         self.broadcast({"t": "wipe"})
 
+    _last_round_winner = None
+    _last_round_team = None
+
     def end_round(self):
+        if is_team(self.mode):
+            lost = self.team_wiped()
+            if lost is not None:
+                self.team_score[1 - lost] += 1
+                self._last_round_winner = None
+                self._last_round_team = 1 - lost
         self.round_no += 1
         self.phase = "countdown"
         self.phase_until = time.time() + CONFIG["ROUND_COUNTDOWN"]
         self.wipe_builds()
         parts = self.participants()
         for i, p in enumerate(parts):
-            self.spawn(p, index=i)
+            self.spawn(p, index=self.team_spawn_index(p) if is_team(self.mode) else i)
+        # The round card carries the score and who took it. A first-to-5 that
+        # runs five rounds back to back with no beat between them does not feel
+        # like a match, it feels like the same fight restarting.
         self.broadcast({"t": "round", "n": self.round_no,
-                        "until": CONFIG["ROUND_COUNTDOWN"]})
+                        "until": CONFIG["ROUND_COUNTDOWN"],
+                        "goal": target_for(self.mode),
+                        "by": self._last_round_winner,
+                        "team": self._last_round_team if is_team(self.mode) else None,
+                        "teams": self.team_score if is_team(self.mode) else None,
+                        "s": [self.wire_stats(q) for q in self.participants()]})
 
     def send_arena(self):
         self.broadcast({"t": "arena", "name": ARENA_NAME,
+                        "label": ARENA_NAMES.get(ARENA_NAME, ARENA_NAME),
                         "arena": ARENA, "spawns": SPAWNS})
 
     def start_match(self, mode):
@@ -1791,14 +1996,18 @@ class Game(object):
         # A duel plays in the box; everything else plays on the open map. The
         # layout has to land before spawn() runs, or players are placed at the
         # old map's spawn points -- outside the new one's walls.
-        if load_arena(MODE_ARENA.get(mode, "open")):
+        want = self.map_choice if self.map_choice in ARENAS else MODE_ARENA.get(mode, "open")
+        if load_arena(want):
             self.send_arena()
         self.round_no = 0
+        self.team_score = [0, 0]
+        self._last_round_team = None
         self.winner = None
         self.grenades = []
         self.targets = []
         self.aim_stats = {}
         self.wipe_builds()
+        self.reset_stats()
         for p in self.players.values():
             p["kills"] = 0
             p["deaths"] = 0
@@ -1807,11 +2016,26 @@ class Game(object):
         self.dummies = []
         if mode == "build":
             self.spawn_dummies()
+        if mode == "trainer":
+            for p in self.players.values():
+                if not p["bot"]:
+                    self.trainer_reset(p)
         if mode == "duel":
             for i, p in enumerate(parts):
                 p["spectator"] = i >= 2
+        if is_team(mode):
+            # Alternate rather than split down the middle: whoever joined first
+            # would otherwise always end up on the same side as the other early
+            # joiners, and with bots that reliably means all the humans vs all
+            # the bots. Up to 8, the rest spectate.
+            for i, p in enumerate(parts):
+                p["spectator"] = i >= 8
+                p["team"] = i % 2
+        else:
+            for p in parts:
+                p["team"] = 0
         for i, p in enumerate(self.participants()):
-            self.spawn(p, index=i)
+            self.spawn(p, index=self.team_spawn_index(p) if is_team(mode) else i)
         for p in self.players.values():
             if p["spectator"]:
                 p["alive"] = False
@@ -1841,6 +2065,70 @@ class Game(object):
             self.remove_player(pid)
         self.broadcast({"t": "mode", "mode": "lobby", "phase": "lobby",
                         "players": [self.public_player(p) for p in self.players.values()]})
+
+    # -- dropping and rejoining -------------------------------------------
+    #
+    # Down at the socket a dropped connection and a player quitting look
+    # identical, and only one of them should cost someone their match. So a
+    # lost connection parks the player: they stay in the scoreboard, keep their
+    # score, their builds and their spot in a duel, and go still. Coming back
+    # inside REJOIN_GRACE with the same token walks straight back into that
+    # slot; past it they are gone for real.
+    def go_offline(self, pid):
+        p = self.players.get(pid)
+        if p is None:
+            return
+        if p["bot"] or self.phase == "lobby" or not self.mode or self.mode == "lobby":
+            # nothing to come back to -- treat it as leaving
+            nm = p["name"]
+            self.remove_player(pid)
+            print("  - %s left" % nm)
+            return
+        p["offline_since"] = time.time()
+        # A parked player must not be shootable, and must not be holding a
+        # duel open by still counting as a participant who is alive.
+        p["alive"] = False
+        self.broadcast({"t": "offline", "id": pid, "name": p["name"]})
+        print("  ~ %s dropped (slot held %ds)" % (p["name"], int(CONFIG["REJOIN_GRACE"])))
+        # the host going quiet cannot leave the lobby unable to start anything
+        if self.host == pid:
+            live = [q["id"] for q in self.players.values()
+                    if not q["bot"] and not q["offline_since"]]
+            if live:
+                self.host = live[0]
+                self.broadcast({"t": "host", "id": self.host})
+
+    def reclaim(self, token):
+        """The parked player holding `token`, put back online. None if there
+        isn't one -- an unknown or expired token just joins fresh."""
+        if not token:
+            return None
+        for p in self.players.values():
+            if p["offline_since"] and p["token"] == token:
+                p["offline_since"] = 0.0
+                if self.host is None:
+                    self.host = p["id"]
+                return p
+        return None
+
+    def sweep_offline(self, now):
+        """Anyone past the grace period has really gone."""
+        grace = CONFIG["REJOIN_GRACE"]
+        for pid, p in list(self.players.items()):
+            if p["offline_since"] and now - p["offline_since"] > grace:
+                nm = p["name"]
+                self.remove_player(pid)
+                print("  - %s left (did not come back)" % nm)
+
+    def private_player(self, p):
+        """The parts of your own record only you see. Sent on welcome so a
+        rejoin lands you back with your health, materials and ammo rather than
+        a fresh set that would be worth dying for."""
+        return {"hp": p["hp"], "shield": p["shield"], "mats": p["mats"],
+                "ammo": p["ammo"], "alive": p["alive"], "hand": p["hand"],
+                "kills": p["kills"], "deaths": p["deaths"],
+                "pos": p["pos"], "yaw": p["yaw"],
+                "spectator": p["spectator"]}
 
     def remove_player(self, pid):
         p = self.players.pop(pid, None)
@@ -1930,12 +2218,15 @@ class Game(object):
             end = v_add(origin, v_scale(dd, t if t is not None else w["range"]))
             results.append((box, t, end))
 
+        p["st"]["shots"] += 1
+        landed = False
         for box, t, end in results:
             if box is None:
                 continue
             if box.kind in ("body", "head"):
                 target = self.players.get(box.ref)
                 if target and target["alive"]:
+                    landed = True
                     head = box.kind == "head"
                     dmg = w["dmg"] * (w["head_mult"] if head else 1.0)
                     self.apply_damage(target, dmg, p["id"], head)
@@ -1948,12 +2239,16 @@ class Game(object):
                                        "dmg": round(w["build_dmg"]), "pos": end})
             elif box.kind in ("dummy", "dummyhead"):
                 head = box.kind == "dummyhead"
+                landed = True            # a dummy is a target; it counts
                 dmg = w["dmg"] * (w["head_mult"] if head else 1.0)
                 self.hit_dummy(box.ref, dmg, head, p["id"], end)
                 self.send_to(p["id"], {"t": "hit", "kind": "dummy", "target": box.ref,
                                        "dmg": round(dmg), "head": head, "pos": end})
             elif box.kind == "target":
                 self.hit_target(box.ref, p)
+
+        if landed:
+            p["st"]["hits"] += 1
 
         self.broadcast({"t": "tracer", "by": p["id"], "w": weapon,
                         "o": [round(v, 2) for v in origin],
@@ -2009,6 +2304,7 @@ class Game(object):
             # nothing else, so there is no reason to ever leave your box; a
             # pickaxe that pays makes the ground itself worth something.
             if self.mode != "build":
+                p["st"]["farmed"] += CONFIG["MAT_PER_SWING"]
                 p["mats"] = min(CONFIG["MAT_CAP"],
                                 p["mats"] + CONFIG["MAT_PER_SWING"])
                 self.send_to(p["id"], {"t": "you", "mats": p["mats"]})
@@ -2078,6 +2374,59 @@ class Game(object):
         return {"hit": st["hit"], "miss": st["miss"], "acc": round(acc, 1),
                 "rt": round(rt * 1000), "score": st["hit"] * 10 - st["miss"] * 3}
 
+    # -- build trainer ----------------------------------------------------
+    #
+    # A course is a list of gates you can only reach by building, and the whole
+    # score is how long it took. Per player, not per lobby: everyone runs the
+    # same course at once on their own clock, so there is nothing to wait for
+    # and nothing to take turns over.
+    def trainer_reset(self, p, course=None):
+        cfg = CONFIG["BUILD_TRAINER"]
+        # `tr` exists but is None until the first run, so .get with a default
+        # is not enough here -- the default only covers a MISSING key.
+        name = course or (p.get("tr") or {}).get("course") or "ramp"
+        if name not in cfg["courses"]:
+            name = "ramp"
+        p["tr"] = {"course": name, "gate": 0, "start": 0.0, "done": 0.0,
+                   "best": (p.get("tr") or {}).get("best", {})}
+        self.send_to(p["id"], {"t": "course", "name": name,
+                               "label": cfg["courses"][name]["label"],
+                               "desc": cfg["courses"][name]["desc"],
+                               "gates": cfg["courses"][name]["gates"],
+                               "gate": 0, "radius": cfg["radius"],
+                               "best": p["tr"]["best"].get(name)})
+
+    def tick_trainer(self, p, now):
+        tr = p.get("tr")
+        if not tr or not p["alive"]:
+            return
+        cfg = CONFIG["BUILD_TRAINER"]
+        gates = cfg["courses"][tr["course"]]["gates"]
+        if tr["gate"] >= len(gates):
+            return
+        g = gates[tr["gate"]]
+        # measured from the chest, so standing under a gate does not count and
+        # standing on the floor you just built to reach it does
+        c = [p["pos"][0], p["pos"][1] + 0.9, p["pos"][2]]
+        if v_dist(c, g) > cfg["radius"]:
+            return
+        if tr["gate"] == 0 and not tr["start"]:
+            tr["start"] = now          # the clock starts at the FIRST gate
+        tr["gate"] += 1
+        if tr["gate"] >= len(gates):
+            took = max(0.0, now - tr["start"]) if tr["start"] else 0.0
+            tr["done"] = took
+            prev = tr["best"].get(tr["course"])
+            best = prev is None or took < prev
+            if best:
+                tr["best"][tr["course"]] = took
+            self.send_to(p["id"], {"t": "coursedone", "time": round(took, 2),
+                                   "best": best,
+                                   "record": round(tr["best"][tr["course"]], 2)})
+        else:
+            self.send_to(p["id"], {"t": "gate", "gate": tr["gate"],
+                                   "t0": tr["start"] and round(tr["start"] * 1000)})
+
     def tick_aim(self, now):
         cfg = CONFIG["AIM_TRAINER"]
         for t in list(self.targets):
@@ -2101,6 +2450,8 @@ class Game(object):
     # -- bots -------------------------------------------------------------
     def tick_bot(self, p, dt, now):
         cfg = CONFIG["BOT"][p["diff"]]
+        sty = CONFIG["BOT_STYLE"].get(p.get("style", "balanced"),
+                                      CONFIG["BOT_STYLE"]["balanced"])
         bt = p["bt"]
         if not p["alive"]:
             return
@@ -2146,9 +2497,13 @@ class Game(object):
                         p["ammo"][weapon] = CONFIG["WEAPONS"][weapon]["mag"]
                     self.do_shoot(p, weapon, eye, shot, random.getrandbits(32))
 
-                # close distance when pushing, back off otherwise
-                push = cfg["push"]
-                desired = 8.0 if random.random() < push else 18.0
+                # close distance when pushing, back off otherwise. Style is
+                # what decides the range it wants to fight at -- a rusher lives
+                # in your face, a turtle will not come off its wall.
+                push = min(1.0, cfg["push"] * sty["push"])
+                desired = (8.0 if random.random() < push else 18.0) * sty["range"]
+                if p["hp"] < 45 and random.random() < sty["retreat"]:
+                    desired += 12.0        # hurt, and this one values its life
                 move = v_sub(tc, p["pos"])
                 move[1] = 0.0
                 if v_len(move) > 0.1:
@@ -2166,8 +2521,9 @@ class Game(object):
         # panic-wall when recently hurt, ramp for height when it wants an angle
         if now >= bt["next_build"] and self.mode != "build":
             hurt = now - p["last_dmg_at"] < 1.2
-            if hurt or (see and random.random() < 0.25):
-                bt["next_build"] = now + cfg["build_cd"]
+            urge = 0.25 * sty["build"]
+            if hurt or (see and random.random() < urge):
+                bt["next_build"] = now + cfg["build_cd"] / max(0.2, sty["build"])
                 yaw = math.radians(p["yaw"])
                 fwd = [-math.sin(yaw), 0.0, -math.cos(yaw)]
                 ahead = v_add(p["pos"], v_scale(fwd, CELL * 0.6))
@@ -2175,10 +2531,15 @@ class Game(object):
                 cy = int(math.floor(p["pos"][1] / CELL))
                 cz = int(math.floor(ahead[2] / CELL))
                 d = self.dir_from_vec(fwd)
+                # hurt -> cover. Otherwise the style decides whether it
+                # walls up or takes height.
                 if hurt:
-                    self.place(p, "wall", cx, cy, cz, d)
-                else:
+                    self.place(p, "wall" if random.random() < sty["wall_first"]
+                               else "ramp", cx, cy, cz, d)
+                elif random.random() < sty["ramp"]:
                     self.place(p, "ramp", cx, cy, cz, d)
+                else:
+                    self.place(p, "wall", cx, cy, cz, d)
 
         # stuck detection: steering, not pathfinding, so it will wedge
         if v_dist(p["pos"], bt["last_pos"]) < 0.06 and v_len(want) > 0.1:
@@ -2243,6 +2604,8 @@ class Game(object):
             self.phase = "live"
             self.broadcast({"t": "phase", "phase": "live"})
 
+        self.sweep_offline(now)
+
         # material regen
         if self.mode in ("duel", "dm"):
             for p in self.players.values():
@@ -2295,6 +2658,12 @@ class Game(object):
         # aim trainer
         if self.mode == "aim" and self.phase == "live":
             self.tick_aim(now)
+
+        # build trainer
+        if self.mode == "trainer" and self.phase == "live":
+            for p in self.players.values():
+                if not p["bot"]:
+                    self.tick_trainer(p, now)
 
         if self.dummies:
             self.tick_dummies(now)
@@ -2425,7 +2794,7 @@ class Game(object):
 
         if t == "setmode":
             mode = m.get("mode")
-            if mode in ("duel", "dm", "build", "aim"):
+            if mode in ("duel", "team", "dm", "build", "aim", "trainer"):
                 self.mode = mode
                 self.broadcast({"t": "mode", "mode": mode, "phase": self.phase})
             return
@@ -2434,9 +2803,26 @@ class Game(object):
             diff = m.get("diff", "medium")
             if diff not in CONFIG["BOT"]:
                 diff = "medium"
+            style = m.get("style", "balanced")
+            if style not in CONFIG["BOT_STYLE"]:
+                style = "balanced"
             n = len([q for q in self.players.values() if q["bot"]]) + 1
-            b = self.new_player("Bot %d (%s)" % (n, diff), is_bot=True, diff=diff)
+            label = CONFIG["BOT_STYLE"][style]["label"]
+            b = self.new_player("Bot %d (%s %s)" % (n, diff, label),
+                                is_bot=True, diff=diff, style=style)
             self.broadcast({"t": "join", "p": self.public_player(b)})
+            return
+
+        if t == "course":
+            if self.mode == "trainer":
+                self.trainer_reset(p, m.get("name"))
+            return
+
+        if t == "setmap":
+            want = m.get("map")
+            if want == "auto" or want in ARENAS:
+                self.map_choice = want
+                self.broadcast({"t": "map", "map": want})
             return
 
         if t == "kickbots":
@@ -2446,11 +2832,15 @@ class Game(object):
 
         if t == "start":
             mode = m.get("mode", self.mode)
-            if mode not in ("duel", "dm", "build", "aim"):
+            if mode not in ("duel", "team", "dm", "build", "aim", "trainer"):
                 return
             if mode == "duel" and len(self.players) != 2:
                 self.send_to(pid, {"t": "err",
                                    "m": "Duel needs exactly 2 players. Add a bot or switch mode."})
+                return
+            if mode == "team" and len(self.players) < 3:
+                self.send_to(pid, {"t": "err",
+                                   "m": "Team mode needs at least 3 players. Add bots."})
                 return
             self.start_match(mode)
             return
@@ -2667,7 +3057,11 @@ class Handler(socketserver.BaseRequestHandler):
                         if msg.get("t") != "hello":
                             continue
                         name = str(msg.get("name", "Player"))[:16].strip() or "Player"
-                        p = GAME.new_player(name)
+                        # A token means "I was already here" -- see reclaim().
+                        p = GAME.reclaim(msg.get("token"))
+                        rejoined = p is not None
+                        if not rejoined:
+                            p = GAME.new_player(name)
                         pid = p["id"]
                         client = Client(sock, self.client_address, pid)
                         GAME.clients[pid] = client
@@ -2675,16 +3069,24 @@ class Handler(socketserver.BaseRequestHandler):
                             GAME.host = pid
                         client.send({
                             "t": "welcome", "id": pid, "host": GAME.host,
-                            "build": BUILD_ID,
+                            "build": BUILD_ID, "token": p["token"],
+                            "rejoined": rejoined,
                             "config": CONFIG, "arena": ARENA, "spawns": SPAWNS,
+                            "maps": ARENA_NAMES, "map": GAME.map_choice,
                             "mode": GAME.mode, "phase": GAME.phase,
+                            "you": GAME.private_player(p),
                             "players": [GAME.public_player(q) for q in GAME.players.values()],
                             "pieces": [GAME.wire_piece(pc) for pc in GAME.pieces.values()],
                             "dummies": GAME.wire_dummies(),
                         })
-                        GAME.broadcast({"t": "join", "p": GAME.public_player(p)},
-                                       exclude=pid)
-                        print("  + %s joined from %s" % (name, self.client_address[0]))
+                        if rejoined:
+                            GAME.broadcast({"t": "rejoin", "p": GAME.public_player(p)},
+                                           exclude=pid)
+                            print("  * %s rejoined from %s" % (p["name"], self.client_address[0]))
+                        else:
+                            GAME.broadcast({"t": "join", "p": GAME.public_player(p)},
+                                           exclude=pid)
+                            print("  + %s joined from %s" % (name, self.client_address[0]))
                         continue
                     try:
                         GAME.handle(pid, msg)
@@ -2694,9 +3096,10 @@ class Handler(socketserver.BaseRequestHandler):
             with GAME.lock:
                 if pid is not None:
                     GAME.clients.pop(pid, None)
-                    nm = GAME.players.get(pid, {}).get("name", "?")
-                    GAME.remove_player(pid)
-                    print("  - %s left" % nm)
+                    # Hold the slot rather than deleting it. A dropped
+                    # connection and a player leaving look identical down here,
+                    # and only one of them should cost someone their match.
+                    GAME.go_offline(pid)
             if client:
                 client.kill()
 

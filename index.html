@@ -85,6 +85,14 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:17px;heigh
 .err{color:var(--bad);font-size:13px;margin-top:12px;min-height:18px;letter-spacing:.02em}
 .err.info{color:var(--dim)}
 
+/* lifetime record */
+#lifetime{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--line)}
+#lifetime.hidden{display:none}
+#lifetime>div{background:#070c14;padding:9px 10px;display:flex;flex-direction:column;gap:3px}
+#lifetime span{font-size:9px;letter-spacing:.14em;color:var(--dim2);text-transform:uppercase;
+  font-weight:700}
+#lifetime b{font:400 18px var(--fh);color:var(--txt)}
+
 /* option toggles */
 .opt{display:flex;align-items:center;gap:14px;padding:9px 11px;background:#070c14;
   border:1px solid var(--line);cursor:pointer;user-select:none}
@@ -241,7 +249,74 @@ kbd{display:inline-block;min-width:26px;text-align:center;background:var(--panel
 /* out of materials: the build group says so rather than silently failing */
 .slot.broke{opacity:.4}
 
+/* touch controls -- only mounted on a device that actually reports touch.
+   A left stick to move, a right half of the screen to look, and the buttons
+   you cannot express with either. Everything routes through the SAME keys[]
+   table and the same press/release handlers the mouse and keyboard use, so
+   there is no second input path to keep in step. */
+#touch{position:fixed;inset:0;z-index:40;pointer-events:none;touch-action:none}
+#touch.hidden{display:none}
+#tstick{position:absolute;left:22px;bottom:26px;width:132px;height:132px;border-radius:50%;
+  background:rgba(8,13,20,.42);border:1px solid var(--line2);pointer-events:auto}
+#tstick i{position:absolute;left:50%;top:50%;width:52px;height:52px;margin:-26px 0 0 -26px;
+  border-radius:50%;background:rgba(79,208,255,.32);border:1px solid var(--accent)}
+#tbtns{position:absolute;right:18px;bottom:22px;display:grid;
+  grid-template-columns:repeat(3,64px);gap:9px;pointer-events:auto}
+.tb{padding:0;height:52px;font:700 10px var(--fb);letter-spacing:.1em;
+  background:rgba(8,13,20,.6);border:1px solid var(--line2);color:var(--dim);
+  clip-path:polygon(0 0,calc(100% - 7px) 0,100% 7px,100% 100%,7px 100%,0 calc(100% - 7px))}
+.tb.big{grid-column:span 3;height:60px;font-size:12px;color:#fff;
+  border-color:var(--accent);background:rgba(29,88,128,.42)}
+.tb.down{background:var(--accent);color:#04121c}
+#tslots{position:absolute;right:18px;top:96px;display:flex;flex-direction:column;gap:6px;
+  pointer-events:auto}
+#tslots button{padding:7px 12px;font:700 10px var(--fb);letter-spacing:.08em;
+  background:rgba(8,13,20,.6);border:1px solid var(--line2);color:var(--dim)}
+#tslots button.on{border-color:var(--accent);color:#fff}
+@media (max-width:820px){
+  #slots{top:56px;bottom:auto;right:14px}
+  #stat{display:none}
+}
+
+/* between rounds -- the beat that makes a first-to-5 feel like a match */
+#intermission{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
+  background:rgba(4,7,12,.58);z-index:55;pointer-events:none;
+  animation:imin .18s cubic-bezier(.2,.8,.3,1)}
+#intermission.hidden{display:none}
+@keyframes imin{from{opacity:0}}
+.imbox{background:rgba(8,13,20,.95);border:1px solid var(--line2);padding:26px 40px 22px;
+  text-align:center;min-width:340px;
+  clip-path:polygon(0 0,calc(100% - 15px) 0,100% 15px,100% 100%,15px 100%,0 calc(100% - 15px))}
+.imbox>b{display:block;font:400 34px/1 var(--fh);letter-spacing:.02em}
+.imbox>i{display:block;font-style:normal;font:700 9.5px var(--fb);letter-spacing:.18em;
+  color:var(--dim2);text-transform:uppercase;margin-top:9px}
+#imscore{margin-top:18px;display:flex;flex-direction:column;gap:1px;background:var(--line)}
+#imscore>div{background:#070c14;display:grid;grid-template-columns:1fr auto;
+  column-gap:16px;padding:9px 13px;text-align:left}
+#imscore u{text-decoration:none;font-size:13px;color:var(--txt);font-weight:600}
+#imscore b{font:400 20px var(--fh);color:var(--accent);grid-row:span 2;align-self:center}
+#imscore i{font-style:normal;font-size:10px;color:var(--dim2);letter-spacing:.05em;margin-top:2px}
+#imscore .me u{color:var(--accent)}
+
+/* reconnecting -- a thin banner, not a wall: the match is still going on
+   behind it and you want to see that it is */
+#reconnect{position:fixed;inset:0;display:flex;align-items:flex-start;justify-content:center;
+  padding-top:16vh;background:rgba(4,7,12,.55);z-index:60;pointer-events:none}
+#reconnect.hidden{display:none}
+.rcbox{background:rgba(8,13,20,.95);border:1px solid var(--line2);padding:20px 34px 18px;
+  text-align:center;min-width:280px;
+  clip-path:polygon(0 0,calc(100% - 13px) 0,100% 13px,100% 100%,13px 100%,0 calc(100% - 13px))}
+.rcspin{width:22px;height:22px;margin:0 auto 12px;border:2px solid var(--line2);
+  border-top-color:var(--accent);border-radius:50%;animation:rcspin .8s linear infinite}
+@keyframes rcspin{to{transform:rotate(360deg)}}
+.rcbox b{display:block;font:400 21px var(--fh);color:#fff;letter-spacing:.03em}
+.rcbox i{display:block;font-style:normal;font:700 9px var(--fb);letter-spacing:.2em;
+  color:var(--accent);text-transform:uppercase;margin-top:6px}
+.rcbox s{display:block;text-decoration:none;font-size:11px;color:var(--dim2);margin-top:9px}
+
 /* killcam -- the live HUD is meaningless during a replay, so it goes away */
+#hud.spectating #cross,#hud.spectating #slots,#hud.spectating #ammo,
+#hud.spectating #matbox,#hud.spectating #vitals{display:none}
 #hud.replay #cross,#hud.replay #slots,#hud.replay #ammo,#hud.replay #matbox,
 #hud.replay #vitals,#hud.replay #pieceinfo,#hud.replay #edithint{opacity:0;
   transition:opacity .2s linear;pointer-events:none}
@@ -257,6 +332,31 @@ kbd{display:inline-block;min-width:26px;text-align:center;background:var(--panel
 #killcam s{display:block;text-decoration:none;font:700 8.5px var(--fb);letter-spacing:.2em;
   color:var(--dim2);text-transform:uppercase}
 
+/* build trainer */
+#course{position:absolute;left:30px;top:80px;background:rgba(8,13,20,.86);
+  border:1px solid var(--line2);padding:12px 18px 13px;min-width:190px;
+  clip-path:polygon(0 0,calc(100% - 12px) 0,100% 12px,100% 100%,12px 100%,0 calc(100% - 12px))}
+#course.hidden{display:none}
+#course u{display:block;font:700 8.5px var(--fb);letter-spacing:.24em;color:var(--dim2);
+  text-decoration:none;text-transform:uppercase}
+#course b{display:block;font:400 30px/1.1 var(--fh);color:#fff;margin-top:3px;
+  font-variant-numeric:tabular-nums}
+#course .cgates{display:flex;gap:4px;margin:10px 0 8px}
+#course .cgates i{flex:1;height:3px;background:var(--line);display:block}
+#course .cgates i.on{background:var(--accent)}
+#course s{display:block;text-decoration:none;font-size:10.5px;color:var(--dim2);
+  letter-spacing:.04em}
+
+/* spectator bar */
+#specbar{position:absolute;left:50%;bottom:26px;transform:translateX(-50%);text-align:center;
+  background:rgba(8,13,20,.86);border:1px solid var(--line2);padding:9px 24px 10px;
+  clip-path:polygon(0 0,calc(100% - 11px) 0,100% 11px,100% 100%,11px 100%,0 calc(100% - 11px))}
+#specbar.hidden{display:none}
+#specbar u{display:block;font:700 8.5px var(--fb);letter-spacing:.3em;color:var(--dim2);
+  text-decoration:none;text-transform:uppercase}
+#specbar b{display:block;font:400 19px/1.3 var(--fh);color:#fff}
+#specbar i{display:block;font-style:normal;font-size:10.5px;color:var(--dim2);margin-top:3px}
+
 /* killfeed */
 #killfeed{position:absolute;right:30px;top:26px;display:flex;flex-direction:column;gap:5px;
   align-items:flex-end}
@@ -266,6 +366,8 @@ kbd{display:inline-block;min-width:26px;text-align:center;background:var(--panel
 .kf b{color:var(--accent);font-weight:600}
 .kf u{text-decoration:none;color:var(--dim)}
 .kf svg{width:14px;height:14px;stroke:var(--bad);fill:none;stroke-width:2}
+.kf.note{border-right-color:var(--dim2)}
+.kf.note u{color:var(--dim)}
 @keyframes kfin{from{opacity:0;transform:translateX(18px)}}
 
 /* round banner */
@@ -471,6 +573,12 @@ kbd{display:inline-block;min-width:26px;text-align:center;background:var(--panel
   <div id="chatlog"></div>
   <input id="chatin" maxlength="140" placeholder="say something…">
   <div id="aimstat" class="hidden"></div>
+  <div id="course" class="hidden">
+    <u></u><b></b>
+    <div class="cgates"></div>
+    <s></s>
+  </div>
+  <div id="specbar" class="hidden"><u>Spectating</u><b></b><i></i></div>
   <div id="killcam" class="hidden">
     <u>Killcam</u><b>Killer</b>
     <div class="kcbar"><i></i></div>
@@ -504,13 +612,17 @@ kbd{display:inline-block;min-width:26px;text-align:center;background:var(--panel
     <div id="buildid" style="margin-top:10px;font-size:10.5px;letter-spacing:.12em;
          color:var(--dim2);text-align:center"></div>
     <div class="divider"></div>
+    <div class="field">
+      <label>Your record</label>
+      <div id="lifetime" class="hidden"></div>
+    </div>
     <div class="field" style="margin:0">
       <label>Controls</label>
       <div class="keys">
         <b><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></b><span>Move &middot; <kbd>Space</kbd> jump &middot; <kbd>Shift</kbd> crouch</span>
         <b><kbd>1</kbd>–<kbd>5</kbd></b><span>Weapon slots, in the order this mode gives them &middot; <kbd>G</kbd> pickaxe</span>
         <b><kbd>Z</kbd><kbd>X</kbd><kbd>C</kbd><kbd>V</kbd></b><span>Wall &middot; Ramp &middot; Floor &middot; Cone <i style="color:var(--dim2);font-style:normal">(rebind in the pause menu)</i></span>
-        <b><kbd>F</kbd></b><span>Edit a piece you built &middot; <kbd>R</kbd> reload &middot; grenades throw on left click</span>
+        <b><kbd>F</kbd></b><span>Edit a piece you built &middot; <kbd>R</kbd> reload &middot; <kbd>T</kbd> rotate &middot; grenades throw on left click</span>
         <b>Mouse</b><span>Left fire / build &middot; Right aim &middot; <kbd>Tab</kbd> scores &middot; <kbd>Enter</kbd> chat</span>
       </div>
     </div>
@@ -530,6 +642,10 @@ kbd{display:inline-block;min-width:26px;text-align:center;background:var(--panel
           <b><svg viewBox="0 0 24 24"><path d="M4 20l7-7M20 4l-7 7"/><path d="M14 4h6v6M10 20H4v-6"/></svg>Duel</b>
           <i>First to 5. Builds wipe and both players reset each round. Needs exactly 2.</i>
         </div>
+        <div class="mode" data-mode="team">
+          <b><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><circle cx="17" cy="9" r="2.5"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6M15 20c0-2.5 1.6-4.6 4-5.3"/></svg>Team Fight</b>
+          <i>2v2 rounds on Towers. No friendly fire, the round ends when a side is wiped. Needs 3+.</i>
+        </div>
         <div class="mode" data-mode="dm">
           <b><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="2.5"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg>Deathmatch</b>
           <i>Respawn in 3s, builds persist, first to 15. Any number of players.</i>
@@ -538,6 +654,10 @@ kbd{display:inline-block;min-width:26px;text-align:center;background:var(--panel
           <b><svg viewBox="0 0 24 24"><path d="M3 21h18M6 21V9l6-5 6 5v12"/><path d="M10 21v-6h4v6"/></svg>Build</b>
           <i>Sandbox. Infinite materials, no damage taken, dummies to break.</i>
         </div>
+        <div class="mode" data-mode="trainer">
+          <b><svg viewBox="0 0 24 24"><path d="M4 20l6-6 4 4 6-9"/><path d="M14 5h6v6"/></svg>Build Trainer</b>
+          <i>Timed courses of gates you can only reach by building. Infinite materials, best times kept.</i>
+        </div>
         <div class="mode" data-mode="aim">
           <b><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="12" r="1"/></svg>Aim Trainer</b>
           <i>Pop-up targets on a timer with accuracy and reaction readout.</i>
@@ -545,13 +665,18 @@ kbd{display:inline-block;min-width:26px;text-align:center;background:var(--panel
       </div>
     </div>
     <div class="field">
+      <label>Map</label>
+      <select id="mapsel"><option value="auto">Auto — whatever the mode wants</option></select>
+    </div>
+    <div class="field">
       <label>Practice bots</label>
       <div class="row" id="hostrow">
-        <select id="botdiff" style="flex:1.2">
-          <option value="easy">Easy bot</option>
-          <option value="medium" selected>Medium bot</option>
-          <option value="hard">Hard bot</option>
+        <select id="botdiff" style="flex:1">
+          <option value="easy">Easy</option>
+          <option value="medium" selected>Medium</option>
+          <option value="hard">Hard</option>
         </select>
+        <select id="botstyle" style="flex:1"></select>
         <button id="btnbot">Add bot</button>
         <button id="btnkick" class="ghost">Clear</button>
       </div>
@@ -578,6 +703,10 @@ kbd{display:inline-block;min-width:26px;text-align:center;background:var(--panel
       <label for="vol">Volume — <span id="volv">60</span>%</label>
       <input id="vol" type="range" min="0" max="100" step="1" value="60">
     </div>
+    <div class="field" id="coursepick" style="display:none">
+      <label>Build trainer course</label>
+      <select id="coursesel"></select>
+    </div>
     <div class="field">
       <label>Building &amp; editing</label>
       <div class="opt" id="opt-turbo">
@@ -586,6 +715,10 @@ kbd{display:inline-block;min-width:26px;text-align:center;background:var(--panel
       </div>
       <div class="opt" id="opt-edithold">
         <span><b>Edit on release</b><i>Hold the edit key and let go to apply, instead of pressing twice</i></span>
+        <u></u>
+      </div>
+      <div class="opt" id="opt-fpv">
+        <span><b>First person</b><i>Camera at the eye with a viewmodel. Third person is easier to build in</i></span>
         <u></u>
       </div>
       <div class="opt" id="opt-killcam">
@@ -618,6 +751,39 @@ kbd{display:inline-block;min-width:26px;text-align:center;background:var(--panel
       <button class="primary" id="btnrematch">Rematch</button>
       <button id="btnendlobby" class="ghost">Back to lobby</button>
     </div>
+  </div>
+</div>
+
+<!-- ---------------- touch controls ---------------- -->
+<div id="touch" class="hidden">
+  <div id="tstick"><i></i></div>
+  <div id="tbtns">
+    <button class="tb" data-act="jump">JUMP</button>
+    <button class="tb" data-act="crouch">CRCH</button>
+    <button class="tb big" data-act="fire">FIRE</button>
+    <button class="tb" data-act="reload">R</button>
+    <button class="tb" data-act="edit">EDIT</button>
+    <button class="tb" data-act="rotate">ROT</button>
+  </div>
+  <div id="tslots"></div>
+</div>
+
+<!-- ---------------- between rounds ---------------- -->
+<div id="intermission" class="hidden">
+  <div class="imbox">
+    <b id="imtitle">Round over</b>
+    <i id="imsub"></i>
+    <div id="imscore"></div>
+  </div>
+</div>
+
+<!-- ---------------- reconnecting ---------------- -->
+<div id="reconnect" class="hidden">
+  <div class="rcbox">
+    <div class="rcspin"></div>
+    <b>Reconnecting</b>
+    <i>Attempt 1</i>
+    <s>Your slot, score and builds are held for a moment</s>
   </div>
 </div>
 
@@ -970,6 +1136,7 @@ const state = {
   running: false, paused: false, dead: false, spectator: false,
   hp: 100, shield: 100, mats: 500,
   hand: 'ar', ads: false, editing: null, buildRot: 0,
+  teamScore: [0, 0],
   ammo: {}, reloadUntil: 0, reloadFor: 0, reloading: null,
   ping: 0, fps: 0, roundNo: 0,
   aim: null,
@@ -1002,7 +1169,7 @@ const settings = {
      so they are settings rather than decisions made for everybody.
        turbo    hold left mouse to keep placing, instead of one click per piece
        editHold hold the edit key and release to apply, instead of F-on/F-off */
-  turbo: true, editHold: false, killcam: true,
+  turbo: true, editHold: false, killcam: true, fpv: false,
 };
 try {
   const s = JSON.parse(localStorage.getItem('bf_settings') || '{}');
@@ -1142,6 +1309,106 @@ const Audio_ = {
     src.start(t);
   },
   land() { this.blip(120, 0.07, 'sine', 0.1); },
+
+  /* ---- positional audio ------------------------------------------------
+     Everything above plays flat into the master bus, which is fine for things
+     YOU did -- you already know where you are. It is no use at all for things
+     other people did, and in a build fight that is most of the information
+     there is: footsteps over your head, a wall going up behind you, someone
+     editing through your floor. You fight by ear long before you see anyone.
+
+     So `at()` returns a bus placed at a world point: distance attenuation plus
+     a stereo pan taken from where the point sits relative to the camera's own
+     right vector. Out of range returns null, and every caller treats that as
+     "do not bother playing it" -- which also keeps a busy fight from stacking
+     forty inaudible nodes a second. */
+  at(pos, range) {
+    if (!this.ctx || !camera) return null;
+    const dx = pos[0] - camera.position.x;
+    const dy = pos[1] - camera.position.y;
+    const dz = pos[2] - camera.position.z;
+    const dist = Math.hypot(dx, dy, dz);
+    const R = range || 42;
+    if (dist > R) return null;
+    // inverse-ish falloff: loud up close, still audible at the edge
+    const atten = Math.pow(1 - dist / R, 1.6);
+    if (atten < 0.012) return null;
+    const g = this.ctx.createGain();
+    g.gain.value = atten;
+    let head = g;
+    if (this.ctx.createStereoPanner && dist > 0.001) {
+      const right = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion);
+      const pan = clamp((dx * right.x + dy * right.y + dz * right.z) / dist, -1, 1);
+      const pn = this.ctx.createStereoPanner();
+      // never hard-panned: a sound fully in one ear reads as broken, not placed
+      pn.pan.value = pan * 0.85;
+      g.connect(pn);
+      head = pn;
+    }
+    head.connect(this.master);
+    return { bus: g, atten: atten };
+  },
+  /* A short filtered noise burst at a world point -- the shape of nearly every
+     physical sound in here (a footstep, a plank going down, wood breaking). */
+  thud(pos, o) {
+    const sp = this.at(pos, o.range);
+    if (!sp) return;
+    const t = this.ctx.currentTime;
+    const g = this.ctx.createGain(), f = this.ctx.createBiquadFilter();
+    f.type = o.type || 'lowpass';
+    f.frequency.setValueAtTime(o.cut, t);
+    f.frequency.exponentialRampToValueAtTime(Math.max(60, o.cut * 0.25), t + o.dur);
+    g.gain.setValueAtTime(o.peak, t);
+    g.gain.exponentialRampToValueAtTime(0.0004, t + o.dur);
+    const src = this.noise(o.dur);
+    src.connect(f); f.connect(g); g.connect(sp.bus);
+    src.start(t);
+  },
+  /* A placed tone, for the things that are signals rather than impacts. */
+  ping(pos, freq, dur, type, vol, range) {
+    const sp = this.at(pos, range);
+    if (!sp) return;
+    const t = this.ctx.currentTime;
+    const o = this.ctx.createOscillator(), g = this.ctx.createGain();
+    o.type = type || 'sine';
+    o.frequency.setValueAtTime(freq, t);
+    g.gain.setValueAtTime(vol, t);
+    g.gain.exponentialRampToValueAtTime(0.0004, t + dur);
+    o.connect(g); g.connect(sp.bus);
+    o.start(t); o.stop(t + dur + 0.02);
+  },
+
+  /* ---- the world's own sounds ------------------------------------------ */
+  // Footsteps carry the fight. Crouched steps are quieter AND duller, so
+  // crouch-walking actually buys you something.
+  step(pos, crouch, mine) {
+    const peak = (crouch ? 0.16 : 0.42) * (mine ? 0.5 : 1);
+    this.thud(pos, { cut: crouch ? 900 : 1900, dur: crouch ? 0.05 : 0.07,
+                     peak: peak, range: crouch ? 18 : 34 });
+  },
+  remoteBuild(pos) {
+    this.ping(pos, 430, 0.08, 'triangle', 0.24, 46);
+    this.thud(pos, { cut: 2400, dur: 0.06, peak: 0.2, range: 46 });
+  },
+  remoteEdit(pos) { this.ping(pos, 720, 0.07, 'square', 0.2, 40); },
+  pieceBreak(pos) {
+    this.thud(pos, { cut: 3000, dur: 0.26, peak: 0.5, range: 52 });
+    this.ping(pos, 150, 0.2, 'sawtooth', 0.16, 52);
+  },
+  editOk() { this.blip(880, 0.05, 'square', 0.12); this.blip(1180, 0.05, 'sine', 0.08); },
+  editNo() { this.blip(200, 0.09, 'sawtooth', 0.11); },
+  reloadDone() { this.blip(520, 0.05, 'square', 0.1); this.blip(760, 0.05, 'square', 0.07); },
+  roundStart() { this.blip(500, 0.1, 'triangle', 0.16); this.blip(760, 0.12, 'triangle', 0.13); },
+  roundEnd(win) {
+    this.blip(win ? 620 : 300, 0.14, 'triangle', 0.16);
+    this.blip(win ? 880 : 220, 0.22, 'triangle', 0.13);
+  },
+  /* Low health is a heartbeat rather than a beep: it has to be noticeable
+     without competing with the footsteps you are straining to hear. */
+  heartbeat(f) {
+    this.blip(64, 0.1, 'sine', 0.13 * f);
+    setTimeout(() => this.blip(58, 0.13, 'sine', 0.1 * f), 155);
+  },
 };
 
 /* =========================================================================
@@ -1149,6 +1416,7 @@ const Audio_ = {
    ========================================================================= */
 const Net = {
   ws: null, url: '', connected: false, lastPing: 0, tOffset: 0,
+  token: null, tries: 0, _timer: null,   // rejoin credentials + backoff
   buffer: [],                       // snapshot buffer for interpolation
   connect(onOpen) {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -1164,13 +1432,46 @@ const Net = {
         window.__fail('Error handling "' + m.t + '"', (e && e.stack) || String(e));
       }
     };
-    ws.onclose = () => { this.connected = false; if (state.running) showConnFail(); };
-    ws.onerror = () => { if (!this.connected) showConnFail(); };
+    ws.onclose = () => {
+      this.connected = false;
+      /* A dropped socket is not the end of the match. The server holds your
+         slot, your score and your builds for REJOIN_GRACE seconds, so the only
+         correct move here is to go back and ask for them -- showing the
+         "no connection" wall immediately was throwing away a match over two
+         seconds of bad wifi. Only give up once the grace has really gone. */
+      if (this.token && this.tries < RECONNECT_TRIES) this.retry();
+      else if (state.running) showConnFail();
+    };
+    ws.onerror = () => { if (!this.connected && !this.token) showConnFail(); };
+  },
+  /* Backoff, but a fast first try: most drops are a single lost second and
+     waiting politely for five of them is its own failure. */
+  retry() {
+    this.tries++;
+    showReconnecting(this.tries);
+    const wait = Math.min(4000, 350 * Math.pow(1.6, this.tries - 1));
+    clearTimeout(this._timer);
+    this._timer = setTimeout(() => {
+      this.connect(() => this.send({ t: 'hello', name: settings.name || 'Player',
+                                     token: this.token }));
+    }, wait);
+  },
+  onLive() {                       // a welcome arrived: we are really back
+    this.tries = 0;
+    hideReconnecting();
   },
   send(m) {
     if (this.ws && this.ws.readyState === 1) this.ws.send(JSON.stringify(m));
   },
 };
+const RECONNECT_TRIES = 9;         // ~18s of trying, inside the server's grace
+function showReconnecting(n) {
+  const el = $('reconnect');
+  el.classList.remove('hidden');
+  el.querySelector('i').textContent = 'Attempt ' + n + ' of ' + RECONNECT_TRIES;
+  document.exitPointerLock && document.exitPointerLock();
+}
+function hideReconnecting() { $('reconnect').classList.add('hidden'); }
 function showConnFail() {
   $('connurl').textContent = 'Tried ' + (Net.url || location.host);
   $('menu').classList.add('hidden');
@@ -1350,6 +1651,7 @@ function buildArena() {
   collidersDirty = true;
 }
 
+let sceneReady = false;
 function initScene() {
   CELL = CFG.CELL; WALL_T = CFG.WALL_T;
   renderer = new THREE.WebGLRenderer({ canvas: $('c'), antialias: true });
@@ -1413,6 +1715,7 @@ function initScene() {
   buildGhost();
   addEventListener('resize', onResize);
   onResize();
+  sceneReady = true;      // a rejoin must not stand up a second renderer
 }
 function onResize() {
   if (!renderer) return;
@@ -2008,6 +2311,18 @@ function updateLocal(dt) {
     if (r.landed) landed = true;
   }
   if (landed && !me.wasGrounded) Audio_.land();
+  /* Your own steps, at half volume. Not decoration: you cannot judge how loud
+     you are to someone else without hearing your own stride, and crouch-walking
+     is a decision you should be able to hear yourself make. */
+  if (me.grounded && !state.dead) {
+    const sp = Math.hypot(me.vel[0], me.vel[2]);
+    me.strideAcc = (me.strideAcc || 0) + (sp > 0.6 ? sp * dt : 0);
+    const STRIDE = me.crouch ? 1.35 : 1.95;
+    if (me.strideAcc >= STRIDE) {
+      me.strideAcc = 0;
+      Audio_.step([me.pos[0], me.pos[1], me.pos[2]], me.crouch, true);
+    }
+  } else me.strideAcc = 0;
   me.wasGrounded = me.grounded;
 }
 
@@ -2015,6 +2330,205 @@ function updateLocal(dt) {
    8. Camera — over the shoulder, pulled in so it never clips a wall
    ========================================================================= */
 let camShake = 0, recoilPitch = 0, recoilYaw = 0;
+/* =========================================================================
+   Viewmodel -- the hands-and-weapon you only see in first person.
+
+   Built from boxes rather than authored models, like everything else here. It
+   is not scenery: the bob tells you how fast you are moving, the sway tells
+   you how hard you just turned, and the kick tells you the shot went out. A
+   first-person view without one reads as a floating camera.
+   ========================================================================= */
+let viewmodel = null, vmParts = {};
+let vmBob = 0, vmSwayX = 0, vmSwayY = 0, vmKick = 0, vmLastYaw = 0, vmLastPitch = 0;
+function vmBox(w, h, d, x, y, z, mat) {
+  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+  m.position.set(x, y, z);
+  return m;
+}
+function buildViewmodel() {
+  if (viewmodel) return;
+  const metal = new THREE.MeshLambertMaterial({ color: 0x2f353e });
+  const dark = new THREE.MeshLambertMaterial({ color: 0x1b2027 });
+  const skin = new THREE.MeshLambertMaterial({ color: 0x8d6b4f });
+  const wood = new THREE.MeshLambertMaterial({ color: 0x6a5b48 });
+  viewmodel = new THREE.Group();
+  viewmodel.renderOrder = 10;
+  const mk = (name, build) => {
+    const g = new THREE.Group();
+    build(g);
+    g.visible = false;
+    viewmodel.add(g);
+    vmParts[name] = g;
+    return g;
+  };
+  // a pair of hands, shared by everything that is held
+  const hands = (g, fx, fz) => {
+    g.add(vmBox(0.075, 0.075, 0.13, fx, -0.045, fz, skin));
+    g.add(vmBox(0.075, 0.075, 0.13, -0.085, -0.075, fz + 0.22, skin));
+  };
+  mk('ar', (g) => {
+    g.add(vmBox(0.06, 0.075, 0.62, 0, -0.03, -0.20, metal));
+    g.add(vmBox(0.045, 0.045, 0.30, 0, 0.012, -0.52, dark));   // barrel
+    g.add(vmBox(0.05, 0.13, 0.10, 0, -0.12, 0.02, dark));      // grip
+    g.add(vmBox(0.055, 0.09, 0.14, 0, -0.10, -0.16, dark));    // magazine
+    hands(g, 0.055, -0.30);
+  });
+  mk('shotgun', (g) => {
+    g.add(vmBox(0.075, 0.085, 0.50, 0, -0.03, -0.16, wood));
+    g.add(vmBox(0.055, 0.055, 0.40, 0, 0.015, -0.48, dark));
+    g.add(vmBox(0.05, 0.12, 0.10, 0, -0.11, 0.06, wood));
+    hands(g, 0.06, -0.34);
+  });
+  mk('sniper', (g) => {
+    g.add(vmBox(0.055, 0.07, 0.72, 0, -0.03, -0.26, wood));
+    g.add(vmBox(0.035, 0.035, 0.46, 0, 0.01, -0.70, dark));
+    g.add(vmBox(0.05, 0.05, 0.22, 0, 0.075, -0.24, dark));     // scope tube
+    g.add(vmBox(0.05, 0.13, 0.10, 0, -0.11, 0.04, wood));
+    hands(g, 0.055, -0.36);
+  });
+  mk('pickaxe', (g) => {
+    g.add(vmBox(0.045, 0.045, 0.60, 0.02, -0.05, -0.20, wood));   // haft
+    g.add(vmBox(0.30, 0.055, 0.075, 0.02, 0.03, -0.46, metal));   // head
+    hands(g, 0.075, -0.24);
+  });
+  mk('grenade', (g) => {
+    g.add(vmBox(0.13, 0.16, 0.13, 0.02, -0.04, -0.26,
+                new THREE.MeshLambertMaterial({ color: 0x3d5a2a })));
+    hands(g, 0.075, -0.20);
+  });
+  // build hands: empty gloves, so switching to a wall still feels like holding
+  // something rather than the model simply vanishing
+  mk('build', (g) => hands(g, 0.06, -0.26));
+  camera.add(viewmodel);
+  scene.add(camera);        // a camera only renders children when it is in the graph
+}
+function updateViewmodel(dt, ads, scoped) {
+  if (!viewmodel) buildViewmodel();
+  if (!viewmodel) return;
+  const key = isBuildHand(state.hand) ? 'build'
+            : (vmParts[state.hand] ? state.hand : 'build');
+  for (const k in vmParts) vmParts[k].visible = (k === key);
+  // a scope fills the screen with its own overlay; the rifle in front of it is
+  // just in the way
+  viewmodel.visible = !scoped;
+
+  // Sway: how far the view turned since last frame, damped. Turn fast and the
+  // weapon lags behind you, which is most of what makes a viewmodel feel heavy.
+  let dy = me.yaw - vmLastYaw;
+  while (dy > 180) dy -= 360;
+  while (dy < -180) dy += 360;
+  const dp = me.pitch - vmLastPitch;
+  vmLastYaw = me.yaw; vmLastPitch = me.pitch;
+  vmSwayX = lerp(vmSwayX, clamp(-dy * 0.010, -0.09, 0.09), 1 - Math.pow(0.002, dt));
+  vmSwayY = lerp(vmSwayY, clamp(dp * 0.008, -0.07, 0.07), 1 - Math.pow(0.002, dt));
+
+  // Bob is driven by ground speed, so it stops dead in the air and while still
+  const sp = me.grounded ? Math.hypot(me.vel[0], me.vel[2]) : 0;
+  vmBob += dt * sp * 1.9;
+  const amp = clamp(sp / CFG.SPEED, 0, 1) * (ads ? 0.35 : 1) * 0.022;
+  const bx = Math.sin(vmBob) * amp, by = -Math.abs(Math.cos(vmBob)) * amp;
+
+  vmKick = Math.max(0, vmKick - dt * 5.5);
+  const base = ads ? [0.0, -0.055, -0.10] : [0.115, -0.115, 0.0];
+  viewmodel.position.set(base[0] + bx + vmSwayX, base[1] + by + vmSwayY,
+                         base[2] + vmKick * 0.16);
+  viewmodel.rotation.set(vmKick * 0.5, vmSwayX * 1.4, vmSwayX * 0.9);
+}
+
+/* =========================================================================
+   Spectating.
+
+   Two cameras, because the two things you want are different: FOLLOW rides
+   whoever is playing (cycled with left click), FREE is a flying camera you
+   steer yourself. Both reuse machinery that already exists -- follow is the
+   killcam rig pointed at a live player instead of a recorded one, and free is
+   the local controller with gravity and collision switched off.
+   ========================================================================= */
+const spec = { mode: 'follow', target: null, pos: [0, 12, 0], yaw: 0, pitch: -20 };
+function specTargets() {
+  return Array.from(state.players.values())
+    .filter((p) => !p.spectator && p.alive && p.id !== state.myId);
+}
+function specCycle(step) {
+  const list = specTargets();
+  if (!list.length) { spec.target = null; return; }
+  const i = list.findIndex((p) => p.id === spec.target);
+  spec.target = list[(i + (step || 1) + list.length) % list.length].id;
+}
+function specToggleMode() {
+  spec.mode = spec.mode === 'follow' ? 'free' : 'follow';
+  if (spec.mode === 'free') {
+    // start the free cam wherever you were watching from, not at the origin
+    spec.pos = [camera.position.x, camera.position.y, camera.position.z];
+    spec.yaw = me.yaw; spec.pitch = me.pitch;
+  }
+  drawSpecBar();
+}
+function drawSpecBar() {
+  const el = $('specbar');
+  if (!state.spectator || !state.running) { el.classList.add('hidden'); return; }
+  el.classList.remove('hidden');
+  const t = spec.target != null ? state.players.get(spec.target) : null;
+  el.querySelector('b').textContent =
+    spec.mode === 'free' ? 'Free camera' : (t ? 'Watching ' + t.name : 'Watching');
+  el.querySelector('i').textContent =
+    spec.mode === 'free' ? 'WASD + mouse · Space up · Shift down'
+                         : 'Click to switch player';
+}
+function updateSpectate(dt) {
+  if (spec.mode === 'free') {
+    const K = settings.keys;
+    const yr = me.yaw * DEG;
+    const fx = -Math.sin(yr), fz = -Math.cos(yr);
+    let mx = 0, mz = 0;
+    if (keys[K.forward]) { mx += fx; mz += fz; }
+    if (keys[K.back]) { mx -= fx; mz -= fz; }
+    if (keys[K.left]) { mx += fz; mz -= fx; }
+    if (keys[K.right]) { mx -= fz; mz += fx; }
+    const len = Math.hypot(mx, mz) || 1;
+    const fast = keys[K.crouch] ? 0 : 1;
+    const sp = 22 * dt;
+    spec.pos[0] += (mx / len) * sp * (mx || mz ? 1 : 0);
+    spec.pos[2] += (mz / len) * sp * (mx || mz ? 1 : 0);
+    if (keys[K.jump]) spec.pos[1] += sp;
+    if (keys[K.crouch]) spec.pos[1] -= sp;
+    void fast;
+    spec.pos[1] = clamp(spec.pos[1], -4, 90);
+    camera.position.set(spec.pos[0], spec.pos[1], spec.pos[2]);
+    camera.rotation.set(clamp(me.pitch, -89, 89) * DEG, me.yaw * DEG, 0, 'YXZ');
+    return;
+  }
+  // follow
+  let t = spec.target != null ? state.players.get(spec.target) : null;
+  if (!t || !t.alive) { specCycle(1); t = state.players.get(spec.target); drawSpecBar(); }
+  if (!t || !t.rpos) {
+    camera.position.set(0, 26, 34);
+    camera.rotation.set(-35 * DEG, 0, 0, 'YXZ');
+    return;
+  }
+  const pitch = clamp(t.rpitch || 0, -85, 85), yaw = t.ryaw || 0;
+  const q = new THREE.Euler(pitch * DEG, yaw * DEG, 0, 'YXZ');
+  const fwd = new THREE.Vector3(0, 0, -1).applyEuler(q);
+  const eye = new THREE.Vector3(t.rpos[0], t.rpos[1] + CFG.EYE, t.rpos[2]);
+  const want = eye.clone().add(fwd.clone().multiplyScalar(-2.6))
+                 .add(new THREE.Vector3(0, 0.4, 0));
+  const dir = want.clone().sub(eye), dist = dir.length();
+  if (dist > 0.01) {
+    dir.normalize();
+    const hit = raycast([eye.x, eye.y, eye.z], [dir.x, dir.y, dir.z],
+                        getColliders(), dist + 0.3);
+    if (hit.t !== null) want.copy(eye).add(dir.multiplyScalar(Math.max(0.2, hit.t - 0.25)));
+  }
+  camera.position.copy(want);
+  camera.rotation.set(pitch * DEG, yaw * DEG, 0, 'YXZ');
+}
+
+/* First person is the genre's native view and third person is better for
+   placing pieces, which is why this is a switch rather than a decision. It
+   also deletes a whole class of problem while it is on: the two-step camera
+   raycast in fire() exists purely to stop a third-person shoulder offset from
+   sending shots somewhere other than the crosshair. */
+function firstPerson() { return !!settings.fpv && !killcam.active && !state.spectator; }
 function updateCamera(dt) {
   const ads = state.ads && !isBuildHand(state.hand);
   const w = CFG.WEAPONS[state.hand];
@@ -2023,6 +2537,22 @@ function updateCamera(dt) {
   camera.fov = lerp(camera.fov, wantFov, 1 - Math.pow(0.0009, dt));
   camera.updateProjectionMatrix();
   $('scope').style.opacity = scoped ? 1 : 0;
+
+  if (firstPerson()) {
+    const eye = eyePos();
+    const pitch = clamp(me.pitch + recoilPitch, -85, 85);
+    const yaw = me.yaw + recoilYaw;
+    camera.position.set(eye[0], eye[1], eye[2]);
+    if (camShake > 0) {
+      camera.position.x += (Math.random() - 0.5) * camShake;
+      camera.position.y += (Math.random() - 0.5) * camShake;
+      camShake = Math.max(0, camShake - dt * 3.2);
+    }
+    camera.rotation.set(pitch * DEG, yaw * DEG, 0, 'YXZ');
+    updateViewmodel(dt, ads, scoped);
+    return;
+  }
+  if (viewmodel) viewmodel.visible = false;
 
   const o = ads ? CFG.CAM_OFF_ADS : CFG.CAM_OFF;
   const eye = eyePos();
@@ -2074,6 +2604,17 @@ function camForward() {
 let ghost = null, ghostValid = false, ghostPlan = null;
 function buildGhost() { buildGeo(); }
 function isBuildHand(h) { return CFG.BUILD_PIECES.indexOf(h) >= 0; }
+/* Which side you are on. In a free-for-all everyone is "team 0" and this is
+   meaningless, which is exactly why colouring keys off it: one code path for
+   both, and in a duel your opponent is simply not your teammate. */
+function myTeam() {
+  const me_ = state.players.get(state.myId);
+  return me_ ? (me_.team || 0) : 0;
+}
+function sameTeam(rp) {
+  if (state.mode !== 'team') return rp.id === state.myId;
+  return (rp.team || 0) === myTeam();
+}
 /* What this mode actually hands you -- mirrors loadout_for() in server.py.
    A duel is three guns and nothing else, so the hotbar, the number keys and
    the quick-draw key all have to ask this rather than CFG.LOADOUT, or they
@@ -2203,10 +2744,9 @@ function facingDir() {
 
    Floors and cones: the box you stand in and two more, trimmed to a circle.
    Ramps: a stride, not a throw -- your own box or the next one.
-   Walls: a wall does not live IN a box, it lives on the edge BETWEEN two, so
-   an edge counts as in reach when EITHER of its boxes is. That is what lets
-   you wall the far side of the furthest floor you can place, which is where a
-   wall is actually useful, without letting you place one a whole box beyond. */
+   Walls: they used to count an edge as in reach when EITHER of its two boxes
+   was, which gave them a whole box more range than everything else. They now
+   use the same circle, so the furthest wall is one floor tile closer. */
 function cellInReach(piece, cx, cy, cz, dq) {
   if (Math.abs(cy - cellOf(me.pos[1] + 0.05)) > CFG.BUILD_RADIUS_Y) return false;
   const dx = cx - cellOf(me.pos[0]), dz = cz - cellOf(me.pos[2]);
@@ -2217,10 +2757,8 @@ function cellInReach(piece, cx, cy, cz, dq) {
     // to facing -- see cell_in_reach() in server.py for why rotation needs that
     return Math.abs(dx) + Math.abs(dz) <= 1;
   }
-  if (piece === 'wall') {
-    const st = CARD[(dq + 2) % 4];        // the facing canonWall() will use
-    return inCircle(dx, dz) || inCircle(dx + st[0], dz + st[2]);
-  }
+  // walls use the same circle as everything else -- see cell_in_reach() in
+  // server.py for why they no longer get a box of extra range
   return inCircle(dx, dz);
 }
 
@@ -2299,9 +2837,7 @@ function planBuild(piece) {
   const off = CARD[dq];
   const baseY = cellOf(me.pos[1] + 0.05);
 
-  // A wall gets one step further than a floor because its edge sits on the far
-  // side of the last box in reach, not in the middle of it.
-  const maxSteps = CFG.BUILD_RADIUS + (piece === 'wall' ? 1 : 0);
+  const maxSteps = CFG.BUILD_RADIUS;
   const probe = maxSteps * CELL;
   const near = nearbyColliders(probe + CELL);
   const hit = raycast(eye, d, near, probe);
@@ -2631,11 +3167,11 @@ function applyEdit() {
   if (nm === edit.mask) { cancelEdit(); return; }
   if (!editMaskOk(state.editing.type, nm)) {
     edit.sel = 0; edit.dragging = false;
-    Audio_.blip(200, 0.05, 'square', 0.06);
+    Audio_.editNo();
     return;
   }
   Net.send({ t: 'edit', key: edit.key, mask: nm });
-  Audio_.build();
+  Audio_.editOk();
   cancelEdit();
 }
 function resetEdit() {
@@ -2878,6 +3414,7 @@ function fire() {
     Net.send({ t: 'shoot', w: w, o: eye, d: sd, at: shotTime() });
     Audio_.shot('pickaxe', 0);
     camShake = 0.03;
+    vmKick = Math.min(1, vmKick + 0.7);          // a swing, not a recoil
     const h = raycast(eye, sd, worldBoxes(), spec.range);
     if (h.t !== null) {
       spawnImpact([eye[0] + sd[0] * h.t, eye[1] + sd[1] * h.t, eye[2] + sd[2] * h.t], 5);
@@ -2894,6 +3431,7 @@ function fire() {
   recoilPitch += spec.recoil * (state.ads ? 0.6 : 1);
   recoilYaw += (Math.random() - 0.5) * spec.recoil * 0.5;
   camShake = Math.min(0.16, spec.recoil * 0.04);
+  vmKick = Math.min(1, vmKick + 0.35 + spec.recoil * 0.08);
   if (spec.mag > 0 && state.ammo[w] <= 0) autoReload();
 }
 
@@ -3203,6 +3741,21 @@ function makeBody(team) {
   return body;
 }
 
+/* Swap a player's body colour when their side changes -- teams are assigned at
+   match start, after everyone's model already exists. */
+function reskinBody(rp) {
+  if (!rp || !rp.grp || !rp.body) return;
+  const friendly = sameTeam(rp);
+  const nb = makeBody(friendly ? 'blue' : 'red');
+  rp.grp.remove(rp.body);
+  disposeMesh(rp.body);
+  rp.grp.add(nb);
+  rp.body = nb;
+}
+function reskinAllBodies() {
+  for (const rp of state.players.values()) reskinBody(rp);
+}
+
 function makeHealthBar() {
   const g = new THREE.Group();
   const bg = new THREE.Sprite(new THREE.SpriteMaterial({ color: 0x101620, depthTest: false }));
@@ -3225,8 +3778,12 @@ function ensurePlayer(p) {
   if (!rp) {
     const grp = new THREE.Group();
     const mine = p.id === state.myId;
-    const body = makeBody(mine ? 'blue' : 'red');
-    const tag = makeNametag(p.name, mine);
+    // Blue is "on your side" rather than "is you": in a 2v2 your partner has
+    // to read as friendly at a glance or you will shoot them.
+    const friendly = state.mode === 'team'
+      ? (p.team || 0) === myTeam() : mine;
+    const body = makeBody(friendly ? 'blue' : 'red');
+    const tag = makeNametag(p.name, friendly);
     tag.position.y = 2.1;
     const bar = makeHealthBar();
     bar.position.y = 1.94;
@@ -3238,6 +3795,7 @@ function ensurePlayer(p) {
       rpos: p.pos ? p.pos.slice() : [0, 0, 0], ryaw: p.yaw || 0, rpitch: 0,
       alive: !!p.alive, crouch: false, hp: p.hp, shield: p.shield,
       kills: p.kills || 0, deaths: p.deaths || 0, spectator: !!p.spectator,
+      team: p.team || 0, offline: !!p.offline,
       anim: 0, dieT: 0,
     };
     state.players.set(p.id, rp);
@@ -3247,6 +3805,8 @@ function ensurePlayer(p) {
     if (p.kills !== undefined) rp.kills = p.kills;
     if (p.deaths !== undefined) rp.deaths = p.deaths;
     if (p.spectator !== undefined) rp.spectator = !!p.spectator;
+    if (p.team !== undefined && rp.team !== p.team) { rp.team = p.team; reskinBody(rp); }
+    if (p.offline !== undefined) rp.offline = !!p.offline;
   }
   return rp;
 }
@@ -3336,6 +3896,7 @@ function sampleRemote(dt) {
    interpolation backwards in time with the camera parented to the killer's
    eye instead of your own.
    ========================================================================= */
+let hbAcc = 0;                    // low-health heartbeat timer
 const KILLCAM_MS = 2600;
 const killcam = { active: false, t: 0, to: 0, by: null };
 function killcamAvailable(byId) {
@@ -3407,8 +3968,10 @@ function updateRemoteVisuals(dt) {
     const yaw = isMe ? me.yaw : rp.ryaw;
     const pitch = isMe ? me.pitch : rp.rpitch;
     const crouch = isMe ? me.crouch : rp.crouch;
-    rp.grp.visible = isMe ? (!state.dead && !state.spectator)
-                          : (rp.alive && !rp.spectator);
+    // In first person your own body is inside the camera: all you ever see of
+    // it is the inside of your own head.
+    rp.grp.visible = isMe ? (!state.dead && !state.spectator && !firstPerson())
+                          : (rp.alive && !rp.spectator && !rp.offline);
     if (!rp.grp.visible) continue;
     rp.grp.position.set(pos[0], pos[1], pos[2]);
     rp.grp.rotation.y = yaw * DEG;
@@ -3416,6 +3979,20 @@ function updateRemoteVisuals(dt) {
     const sp = Math.hypot(pos[0] - (rp.lastx || pos[0]),
                           pos[2] - (rp.lastz || pos[2])) / Math.max(dt, 1e-4);
     rp.lastx = pos[0]; rp.lastz = pos[2];
+    /* A step every STRIDE metres of ground covered, not every N seconds: tie
+       it to a timer and a walking player and a sprinting one sound the same.
+       Falling players are skipped -- the give-away is the landing, and that
+       already has its own sound. */
+    if (!isMe && !killcam.active) {
+      const dy = Math.abs(pos[1] - (rp.lasty == null ? pos[1] : rp.lasty));
+      rp.lasty = pos[1];
+      rp.strideAcc = (rp.strideAcc || 0) + (sp > 0.6 && dy < 0.35 ? sp * dt : 0);
+      const STRIDE = rp.crouch ? 1.35 : 1.95;
+      if (rp.strideAcc >= STRIDE) {
+        rp.strideAcc = 0;
+        Audio_.step(pos, rp.crouch, false);
+      }
+    }
     rp.anim += dt * clamp(sp, 0, 9) * 1.5;
     const sw = Math.sin(rp.anim * 2) * clamp(sp / 7, 0, 1) * 0.7;
     const pr = clamp(pitch, -70, 70) * DEG;
@@ -3457,6 +4034,89 @@ function targetMesh() {
   m.castShadow = true;
   return m;
 }
+/* =========================================================================
+   Build trainer -- gates you can only reach by building, against a clock.
+
+   The gate you are on is a solid ring; the ones after it are ghosts, so the
+   route is visible from the ground and you can plan the whole climb before you
+   place anything. That is the skill being practised -- not reacting to one
+   marker at a time.
+   ========================================================================= */
+const course = { gates: [], meshes: [], at: 0, t0: 0, running: false,
+                 name: null, best: null };
+function gateMesh(active) {
+  const g = new THREE.Group();
+  const col = active ? 0x4fd0ff : 0x3a5468;
+  const ring = new THREE.Mesh(
+    new THREE.TorusGeometry(CFG.BUILD_TRAINER.radius * 0.8, 0.12, 8, 28),
+    new THREE.MeshBasicMaterial({ color: col, transparent: true,
+                                  opacity: active ? 0.95 : 0.34 }));
+  ring.rotation.x = Math.PI / 2;
+  g.add(ring);
+  const post = new THREE.Mesh(
+    new THREE.BoxGeometry(0.1, 0.1, 0.1),
+    new THREE.MeshBasicMaterial({ color: col, transparent: true,
+                                  opacity: active ? 0.5 : 0.18 }));
+  post.scale.set(1, 40, 1);            // a light column, so it reads from below
+  post.position.y = 2;
+  g.add(post);
+  return g;
+}
+function clearCourse() {
+  for (const m of course.meshes) { scene.remove(m); disposeMesh(m); }
+  course.meshes = [];
+}
+function buildCourse() {
+  clearCourse();
+  course.gates.forEach((p, i) => {
+    const m = gateMesh(i === course.at);
+    m.position.set(p[0], p[1], p[2]);
+    m.visible = i >= course.at;
+    scene.add(m);
+    course.meshes.push(m);
+  });
+}
+function setCourse(m) {
+  course.gates = m.gates || [];
+  course.at = m.gate || 0;
+  course.name = m.name; course.label = m.label; course.desc = m.desc;
+  course.best = m.best == null ? null : m.best;
+  course.t0 = 0; course.running = false;
+  buildCourse();
+  drawCourse();
+}
+function advanceGate(n, t0) {
+  course.at = n;
+  if (t0 && !course.t0) { course.t0 = t0; course.running = true; }
+  if (!course.running) { course.running = true; course.t0 = course.t0 || Date.now(); }
+  buildCourse();
+  Audio_.blip(880 + n * 90, 0.07, 'square', 0.14);
+  drawCourse();
+}
+function drawCourse() {
+  const el = $('course');
+  if (state.mode !== 'trainer' || !course.gates.length) {
+    el.classList.add('hidden');
+    return;
+  }
+  el.classList.remove('hidden');
+  el.querySelector('u').textContent = course.label || 'Course';
+  const secs = course.running && course.t0
+    ? (Date.now() - course.t0) / 1000
+    : (course.finished != null ? course.finished : 0);
+  el.querySelector('b').textContent = secs.toFixed(2) + 's';
+  const bars = el.querySelector('.cgates');
+  bars.innerHTML = '';
+  for (let i = 0; i < course.gates.length; i++) {
+    const b = document.createElement('i');
+    if (i < course.at) b.className = 'on';
+    bars.appendChild(b);
+  }
+  el.querySelector('s').textContent = course.best != null
+    ? 'Best ' + course.best.toFixed(2) + 's'
+    : (course.desc || 'Reach every gate');
+}
+
 /* Dummies are server entities now, not scenery: they carry health and shield,
    die when both are gone, and respawn on the server's clock. The client only
    renders whatever the server reports. */
@@ -3571,6 +4231,7 @@ function drawSlots() {
   group('Build', [['wall', 'Wall'], ['ramp', 'Ramp'], ['floor', 'Floor'], ['roof', 'Cone']]
     .map(([id, n]) => ({ k: bindLabel(id), n, id })), true);
   focusSlots();
+  drawTouchSlots();
 }
 
 /* Which half of the bar is at full size. Building and shooting are mutually
@@ -3586,6 +4247,18 @@ function killfeed(html) {
   const d = document.createElement('div');
   d.className = 'kf';
   d.appendChild(html);
+  $('killfeed').appendChild(d);
+  setTimeout(() => d.remove(), 5200);
+}
+/* A plain line in the killfeed -- connection events, not kills, so it gets no
+   kill glyph and no red edge. */
+function killfeedNote(text) {
+  const f = document.createDocumentFragment();
+  const u = document.createElement('u'); u.textContent = text;
+  f.appendChild(u);
+  const d = document.createElement('div');
+  d.className = 'kf note';
+  d.appendChild(f);
   $('killfeed').appendChild(d);
   setTimeout(() => d.remove(), 5200);
 }
@@ -3672,6 +4345,29 @@ function drawCrosshair() {
 }
 function drawTopbar() {
   const bar = $('topbar');
+  if (state.mode === 'team') {
+    bar.classList.remove('hidden');
+    bar.innerHTML = '';
+    const mine = myTeam();
+    const mk = (side) => {
+      const s = document.createElement('span');
+      s.className = 'sc';
+      s.style.color = side === mine ? 'var(--accent)' : 'var(--bad)';
+      s.textContent = state.teamScore[side];
+      return s;
+    };
+    const lab = (side) => {
+      const n = document.createElement('span');
+      n.textContent = side === mine ? 'Your team' : 'Enemy';
+      return n;
+    };
+    bar.appendChild(lab(0)); bar.appendChild(mk(0));
+    const v = document.createElement('span'); v.className = 'vs';
+    v.textContent = 'FIRST TO ' + (CFG.TEAM_TARGET || 5);
+    bar.appendChild(v);
+    bar.appendChild(mk(1)); bar.appendChild(lab(1));
+    return;
+  }
   if (state.mode !== 'duel' && state.mode !== 'dm') { bar.classList.add('hidden'); return; }
   bar.classList.remove('hidden');
   bar.innerHTML = '';
@@ -3707,9 +4403,52 @@ function drawBoard() {
   for (const p of rows) {
     const r = t.insertRow();
     if (p.id === state.myId) r.className = 'me';
-    const c0 = r.insertCell(); c0.className = 'n'; c0.textContent = p.name + (p.bot ? ' (bot)' : '');
+    const c0 = r.insertCell(); c0.className = 'n';
+    c0.textContent = p.name + (p.bot ? ' (bot)' : '') + (p.offline ? '  ⏻' : '');
+    if (p.offline) c0.style.opacity = '.5';
     const c1 = r.insertCell(); c1.className = 'num'; c1.textContent = p.kills;
     const c2 = r.insertCell(); c2.className = 'num'; c2.textContent = p.deaths;
+  }
+}
+
+/* Lifetime totals, kept in this browser only. Nothing is sent anywhere -- it
+   exists so a session adds up to something rather than evaporating when you
+   close the tab. */
+function lifetime() {
+  try { return JSON.parse(localStorage.getItem('bf_lifetime') || '{}'); }
+  catch (e) { return {}; }
+}
+function recordLifetime(m) {
+  const mine = (m.s || []).find((p) => p.id === state.myId);
+  if (!mine) return;
+  const L = lifetime();
+  const add = (k, v) => { L[k] = (L[k] || 0) + (v || 0); };
+  add('matches', 1);
+  add('wins', m.winner === state.myId ? 1 : 0);
+  add('kills', mine.kills); add('deaths', mine.deaths);
+  add('shots', mine.shots); add('hits', mine.hits);
+  add('dmg', mine.dmg); add('built', mine.built); add('farmed', mine.farmed);
+  if ((mine.best || 0) > (L.best || 0)) L.best = mine.best;
+  try { localStorage.setItem('bf_lifetime', JSON.stringify(L)); } catch (e) {}
+  drawLifetime();
+}
+function drawLifetime() {
+  const L = lifetime(), el = $('lifetime');
+  if (!el) return;
+  if (!L.matches) { el.classList.add('hidden'); return; }
+  el.classList.remove('hidden');
+  const acc = L.shots ? (100 * L.hits / L.shots).toFixed(1) + '%' : '—';
+  const kd = L.deaths ? (L.kills / L.deaths).toFixed(2) : String(L.kills || 0);
+  const rows = [['Matches', L.matches], ['Wins', L.wins || 0], ['K/D', kd],
+                ['Accuracy', acc], ['Damage', Math.round(L.dmg || 0)],
+                ['Pieces built', L.built || 0]];
+  el.innerHTML = '';
+  for (const [k, v] of rows) {
+    const d = document.createElement('div');
+    const s1 = document.createElement('span'); s1.textContent = k;
+    const s2 = document.createElement('b'); s2.textContent = v;
+    d.appendChild(s1); d.appendChild(s2);
+    el.appendChild(d);
   }
 }
 function drawStat() {
@@ -3777,21 +4516,85 @@ function handleMsg(m) {
       CFG = m.config; ARENA = m.arena; SPAWNS = m.spawns; DUMMIES = m.dummies;
       state.myId = m.id; state.hostId = m.host;
       state.mode = m.mode; state.phase = m.phase;
-      initScene();
+      Net.token = m.token || null;      // the key back into this slot
+      fillMaps(m.maps, m.map);
+      fillBotStyles(m.config.BOT_STYLE);
+      fillCourses(m.config.BUILD_TRAINER.courses);
+      Net.onLive();
+      /* One handler for both arrivals. A rejoin gets the same message as a
+         fresh join -- full player list, full piece list -- because the client
+         coming back has no idea what it missed and rebuilding is cheaper and
+         far more reliable than trying to diff. What it must NOT do is stand up
+         a second renderer and a second frame loop. */
+      const first = !sceneReady;
+      if (first) initScene();
+      else { wipePieces(); buildArena(); }
+      if (!first) {
+        for (const id of Array.from(state.players.keys())) {
+          if (id !== m.id) dropPlayer(id);
+        }
+      }
       for (const p of m.players) ensurePlayer(p);
       for (const p of m.pieces) addPiece(p);
       setDummies(m.dummies);
       settings.fov = settings.fov || CFG.FOV;
       state.ammo = {};
       for (const w of CFG.LOADOUT) state.ammo[w] = CFG.WEAPONS[w].mag;
-      enterLobby();
-      startLoop();
+      /* Coming back mid-match means coming back to what you had: your health,
+         your materials, your magazine and your score. Handing out a fresh set
+         would make dropping your connection worth doing on purpose. */
+      if (m.you) {
+        const y = m.you;
+        state.hp = y.hp; state.shield = y.shield; state.mats = y.mats;
+        state.ammo = Object.assign(state.ammo, y.ammo || {});
+        state.hand = y.hand; state.dead = !y.alive; state.spectator = !!y.spectator;
+        if (y.pos) { me.pos = y.pos.slice(); me.vel = [0, 0, 0]; me.yaw = y.yaw || 0; }
+      }
+      if (m.phase === 'lobby' || !m.mode || m.mode === 'lobby') enterLobby();
+      else { enterMatch(true); }
+      if (first) startLoop();
+      break;
+    }
+    case 'rejoin': {
+      const rp = ensurePlayer(m.p);
+      if (rp) rp.offline = false;
+      killfeedNote(m.p.name + ' reconnected');
+      drawBoard();
+      break;
+    }
+    case 'offline': {
+      const rp = state.players.get(m.id);
+      if (rp) { rp.offline = true; rp.alive = false; }
+      killfeedNote(m.name + ' lost connection');
+      drawBoard();
       break;
     }
     case 'arena':
       // a mode change swapped the map out from under us
       ARENA = m.arena; SPAWNS = m.spawns;
+      state.mapLabel = m.label || m.name;
       buildArena();
+      break;
+    case 'course':
+      course.finished = null;
+      setCourse(m);
+      break;
+    case 'gate':
+      advanceGate(m.gate, m.t0 ? m.t0 - Net.tOffset : 0);
+      break;
+    case 'coursedone':
+      course.running = false;
+      course.finished = m.time;
+      course.best = m.record;
+      course.at = course.gates.length;
+      buildCourse();
+      drawCourse();
+      roundMessage(m.time.toFixed(2) + 's',
+                   m.best ? 'new best' : 'best ' + m.record.toFixed(2) + 's', 2400);
+      Audio_.roundEnd(!!m.best);
+      break;
+    case 'map':
+      if ($('mapsel').value !== m.map) $('mapsel').value = m.map;
       break;
     case 'join':
       ensurePlayer(m.p);
@@ -3852,14 +4655,24 @@ function handleMsg(m) {
       break;
     case 'build':
       addPiece(m.p);
-      if (m.p.owner !== state.myId) Audio_.build();
+      // yours is a flat confirmation; someone else's is a position you need
+      if (m.p.owner === state.myId) Audio_.build();
+      else Audio_.remoteBuild(pieceCenter(m.p.type, m.p.cx, m.p.cy, m.p.cz));
       break;
-    case 'unbuild':
+    case 'unbuild': {
+      const rec = pieces.get(m.key);
+      if (rec) Audio_.pieceBreak(pieceCenter(rec.type, rec.cx, rec.cy, rec.cz));
       removePiece(m.key);
       break;
-    case 'editbuild':
+    }
+    case 'editbuild': {
+      const rec = pieces.get(m.key);
       reskinPiece(m.key, m.mask);
+      if (rec && rec.owner !== state.myId) {
+        Audio_.remoteEdit(pieceCenter(rec.type, rec.cx, rec.cy, rec.cz));
+      }
       break;
+    }
     case 'pdmg': {
       const rec = pieces.get(m.key);
       if (rec) { rec.hp = m.hp; applyPieceStage(rec); }
@@ -3938,13 +4751,20 @@ function handleMsg(m) {
     case 'round':
       state.roundNo = m.n;
       state.phase = 'countdown';
-      roundMessage('ROUND ' + (m.n + 1), 'get ready', m.until * 1000);
+      if (m.teams) state.teamScore = m.teams.slice();
+      stopKillcam();
+      showIntermission(m);
+      drawTopbar();
       break;
     case 'phase':
       state.phase = m.phase;
       // a round boundary must not leave a replay running over live play
       if (m.phase !== 'live') stopKillcam();
-      if (m.phase === 'live') roundMessage('FIGHT', '', 900);
+      if (m.phase === 'live') {
+        hideIntermission();
+        roundMessage('FIGHT', '', 900);
+        Audio_.roundStart();
+      }
       break;
     case 'mode':
       state.mode = m.mode;
@@ -3955,6 +4775,9 @@ function handleMsg(m) {
          phase still 'lobby'. Branching on mode meant that click threw everyone
          into the match HUD with no match running, leaving phase stuck at
          'lobby' so nothing could ever shoot or build. */
+      state.teamScore = [0, 0];
+      if (m.mode !== 'trainer') { clearCourse(); course.gates = []; drawCourse(); }
+      if (m.players) reskinAllBodies();
       if (m.phase === 'lobby') { chosenMode = m.mode; enterLobby(); }
       else enterMatch();
       break;
@@ -4014,7 +4837,44 @@ function drawAim() {
    16. Screens
    ========================================================================= */
 let chosenMode = 'duel';
+function fillMaps(maps, current) {
+  const sel = $('mapsel');
+  if (!maps || sel.dataset.filled) return;
+  for (const k in maps) {
+    const o = document.createElement('option');
+    o.value = k; o.textContent = maps[k];
+    sel.appendChild(o);
+  }
+  sel.dataset.filled = '1';
+  sel.value = current || 'auto';
+  sel.onchange = () => Net.send({ t: 'setmap', map: sel.value });
+}
+/* Difficulty says how fast a bot is; style says what it is trying to do. They
+   are separate dropdowns because they are separate questions -- a hard turtle
+   and a hard rusher teach you completely different things. */
+function fillBotStyles(styles) {
+  const sel = $('botstyle');
+  if (!styles || sel.dataset.filled) return;
+  for (const k in styles) {
+    const o = document.createElement('option');
+    o.value = k; o.textContent = styles[k].label;
+    sel.appendChild(o);
+  }
+  sel.dataset.filled = '1';
+}
+function fillCourses(courses) {
+  const sel = $('coursesel');
+  if (!courses || sel.dataset.filled) return;
+  for (const k in courses) {
+    const o = document.createElement('option');
+    o.value = k; o.textContent = courses[k].label;
+    sel.appendChild(o);
+  }
+  sel.dataset.filled = '1';
+  sel.onchange = () => Net.send({ t: 'course', name: sel.value });
+}
 function enterLobby() {
+  hideIntermission();
   state.running = false;
   state.mode = 'lobby';
   $('hud').classList.add('hidden');
@@ -4057,50 +4917,115 @@ function refreshLobby() {
   $('lobbyerr').textContent =
     (chosenMode === 'duel' && n !== 2)
       ? 'Duel needs exactly 2 — you have ' + n + '. Add a bot, or pick Deathmatch.'
-      : '';
+      : (chosenMode === 'team' && n < 3)
+        ? 'Team Fight needs at least 3 — you have ' + n + '. Add bots.'
+        : '';
+  $('mapsel').disabled = !isHost;
   for (const el of document.querySelectorAll('.mode')) {
     el.classList.toggle('on', el.dataset.mode === chosenMode);
   }
 }
-function enterMatch() {
+/* `resuming` is a rejoin: the welcome already restored health, materials, ammo
+   and which weapon was in your hands, and stamping the mode's defaults over
+   that would undo the whole point of holding the slot. */
+function enterMatch(resuming) {
   $('lobby').classList.add('hidden');
   $('endcard').classList.add('hidden');
   $('menu').classList.add('hidden');
   $('hud').classList.remove('hidden');
   state.running = true;
-  state.dead = false;
-  // the mode decides what you are holding -- 'ar' is not in every loadout
-  state.hand = activeLoadout()[0];
+  if (!resuming) {
+    state.dead = false;
+    // the mode decides what you are holding -- 'ar' is not in every loadout
+    state.hand = activeLoadout()[0];
+  }
   drawSlots(); drawAmmo(); drawVitals(); drawMats(); drawTopbar(); drawAim();
   const meRp = state.players.get(state.myId);
-  state.spectator = meRp ? meRp.spectator : false;
+  if (!resuming) state.spectator = meRp ? meRp.spectator : false;
+  if (state.spectator) { spec.mode = 'follow'; specCycle(1); }
+  drawSpecBar();
+  $('hud').classList.toggle('spectating', state.spectator);
   $('clickplay').classList.remove('hidden');
 }
+/* The beat between rounds. Who took it, the score, and the running stats --
+   so a first-to-5 reads as five rounds rather than one fight that keeps
+   restarting. Times itself out with the server's own countdown. */
+let intermissionT = null;
+function showIntermission(m) {
+  const el = $('intermission');
+  const teamRound = m.team != null;
+  const winner = m.by != null ? state.players.get(m.by) : null;
+  const won = teamRound ? (m.team === myTeam()) : (m.by === state.myId);
+  $('imtitle').textContent = (teamRound || winner)
+    ? (won ? 'Round won' : 'Round lost') : 'Round over';
+  $('imtitle').style.color = (teamRound || winner)
+    ? (won ? 'var(--gold)' : 'var(--bad)') : 'var(--txt)';
+  const detail = teamRound ? (m.teams ? '  ·  ' + m.teams[myTeam()] + ' – ' +
+                                        m.teams[1 - myTeam()] : '')
+                           : (winner ? '  ·  ' + winner.name + ' took it' : '');
+  $('imsub').textContent = 'Round ' + (m.n + 1) + ' of ' + ((m.goal || 5) * 2 - 1) + detail;
+  const sc = $('imscore');
+  sc.innerHTML = '';
+  for (const p of (m.s || []).slice().sort((a, b) => b.kills - a.kills)) {
+    const d = document.createElement('div');
+    if (p.id === state.myId) d.className = 'me';
+    const n = document.createElement('u'); n.textContent = p.name + (p.bot ? ' (bot)' : '');
+    const k = document.createElement('b'); k.textContent = p.kills;
+    const x = document.createElement('i');
+    x.textContent = (p.shots ? p.acc + '% acc' : 'no shots') + '  ·  ' +
+                    p.dmg + ' dmg  ·  ' + p.built + ' built';
+    d.appendChild(n); d.appendChild(k); d.appendChild(x);
+    sc.appendChild(d);
+  }
+  el.classList.remove('hidden');
+  Audio_.roundEnd(won);
+  clearTimeout(intermissionT);
+  intermissionT = setTimeout(hideIntermission, Math.max(600, (m.until || 3) * 1000 - 250));
+}
+function hideIntermission() {
+  clearTimeout(intermissionT);
+  $('intermission').classList.add('hidden');
+}
 function showEnd(m) {
-  const win = m.winner === state.myId;
+  hideIntermission();
+  // a team match is won by a side, not a person
+  const win = m.team != null ? (m.team === myTeam()) : (m.winner === state.myId);
   $('endtitle').textContent = win ? 'You win' : (m.name + ' wins');
   $('endtitle').style.color = win ? 'var(--gold)' : 'var(--txt)';
-  $('endsub').textContent = state.mode === 'duel' ? 'Duel complete' : 'Deathmatch complete';
+  $('endsub').textContent = { duel: 'Duel complete', team: 'Team match complete',
+                              dm: 'Deathmatch complete' }[state.mode] || 'Match complete';
   const t = $('endtable');
   t.innerHTML = '';
+  /* Kills and deaths say who won; the rest says how. Accuracy is per trigger
+     pull, so a shotgun is not punished for spreading -- see wire_stats() in
+     server.py. */
+  const COLS = [
+    ['Player', (p) => p.name],
+    ['K', (p) => p.kills],
+    ['D', (p) => p.deaths],
+    ['Acc', (p) => (p.shots ? p.acc + '%' : '—')],
+    ['Dmg', (p) => p.dmg],
+    ['Built', (p) => p.built],
+    ['Farmed', (p) => p.farmed],
+  ];
   const h = t.insertRow();
-  ['Player', 'Kills', 'Deaths'].forEach((x, i) => {
+  COLS.forEach(([x], i) => {
     const th = document.createElement('th');
     th.textContent = x;
     th.style.cssText = 'text-align:' + (i ? 'right' : 'left') +
-      ';font-size:10.5px;letter-spacing:.1em;color:var(--dim);padding:8px 10px;text-transform:uppercase';
+      ';font-size:10.5px;letter-spacing:.1em;color:var(--dim);padding:8px 8px;text-transform:uppercase';
     h.appendChild(th);
   });
-  for (const p of (m.s || []).sort((a, b) => b.kills - a.kills)) {
+  for (const p of (m.s || []).slice().sort((a, b) => b.kills - a.kills)) {
     const r = t.insertRow();
-    const c0 = r.insertCell(); c0.textContent = p.name;
-    const c1 = r.insertCell(); c1.textContent = p.kills;
-    const c2 = r.insertCell(); c2.textContent = p.deaths;
-    [c0, c1, c2].forEach((c, i) => {
-      c.style.cssText = 'padding:9px 10px;border-top:1px solid var(--line);text-align:' +
+    COLS.forEach(([, get], i) => {
+      const c = r.insertCell();
+      c.textContent = get(p);
+      c.style.cssText = 'padding:9px 8px;border-top:1px solid var(--line);font-size:13px;text-align:' +
         (i ? 'right' : 'left') + (p.id === state.myId ? ';color:var(--accent);font-weight:700' : '');
     });
   }
+  recordLifetime(m);
   $('endcard').classList.remove('hidden');
   state.running = false;
   document.exitPointerLock && document.exitPointerLock();
@@ -4143,6 +5068,7 @@ $('clickplay').addEventListener('mousedown', (e) => {
   requestLock();
 });
 function pause(on) {
+  $('coursepick').style.display = (state.mode === 'trainer') ? '' : 'none';
   state.paused = on;
   if (on) { capturingBind = null; drawPresets(); drawBinds(); }
   $('pause').classList.toggle('hidden', !on);
@@ -4151,6 +5077,17 @@ function pause(on) {
 }
 
 let dragLook = false;
+/* One place that turns a pixel delta into a view change. Mouse, drag-look and
+   touch all go through it, so sensitivity, ADS scaling and the pitch clamp are
+   defined once instead of three times. */
+function applyLook(dx, dy) {
+  const w = CFG && CFG.WEAPONS[state.hand];
+  let s = settings.sens * 0.12;
+  if (state.ads) s *= (w && w.scope) ? 0.3 : 0.62;
+  me.yaw -= dx * s;
+  me.pitch = clamp(me.pitch - dy * s, -85, 85);
+  me.yaw = ((me.yaw % 360) + 360) % 360;
+}
 addEventListener('mousemove', (e) => {
   if (!state.running || state.paused) return;
   if (document.pointerLockElement !== $('c')) {
@@ -4162,13 +5099,7 @@ addEventListener('mousemove', (e) => {
     me.yaw = ((me.yaw % 360) + 360) % 360;
     return;
   }
-  const spec = CFG.WEAPONS[state.hand];
-  let s = settings.sens * 0.12;
-  if (state.ads) s *= (spec && spec.scope) ? 0.3 : 0.62;
-  me.yaw -= e.movementX * s;
-  me.pitch -= e.movementY * s;
-  me.pitch = clamp(me.pitch, -85, 85);
-  me.yaw = ((me.yaw % 360) + 360) % 360;
+  applyLook(e.movementX, e.movementY);
 });
 
 let firing = false;
@@ -4184,12 +5115,18 @@ function onPress(e) {
   // unclickable with no way to tell.
   const cp = $('clickplay');
   if (!cp.classList.contains('hidden')) {
+    if (TOUCH_ON) { cp.classList.add('hidden'); lastClick = 'touch ready'; return; }
     cp.classList.add('hidden');
     lastClick = 'grabbed mouse';
     return;
   }
   if (e.button === 0) {
     if (killcam.active) { stopKillcam(); lastClick = 'skipped killcam'; return; }
+    if (state.spectator) {
+      if (spec.mode === 'follow') { specCycle(1); drawSpecBar(); }
+      lastClick = 'spectating';
+      return;
+    }
     if (state.editing) {
       edit.dragging = true;
       // Looking has to stay live while you drag. Without pointer lock the view
@@ -4296,6 +5233,132 @@ if (window.PointerEvent) {
   addEventListener('mouseup', (e) => applyButtons(e.buttons));
   addEventListener('mousemove', (e) => applyButtons(e.buttons));
 }
+
+/* =========================================================================
+   Touch.
+
+   Mounted only where touch is actually reported, and deliberately routed
+   through the existing input surfaces rather than a parallel one: the stick
+   writes the same keys[] entries WASD writes, the buttons call the same
+   onPress/onRelease the mouse calls, and looking feeds the same applyLook the
+   pointer feeds. A second input path is a second set of bugs.
+   ========================================================================= */
+const TOUCH_ON = (navigator.maxTouchPoints || 0) > 0 || 'ontouchstart' in window;
+let lookTouchId = null, stickTouchId = null;
+function touchSetup() {
+  if (!TOUCH_ON) return;
+  $('touch').classList.remove('hidden');
+  const K = () => settings.keys;
+  const stick = $('tstick'), knob = stick.firstElementChild;
+  const setMove = (dx, dy) => {
+    const k = K();
+    // a dead zone, or resting a thumb walks you off a build
+    const dead = 0.22, r = Math.hypot(dx, dy);
+    keys[k.forward] = keys[k.back] = keys[k.left] = keys[k.right] = false;
+    if (r < dead) return;
+    if (dy < -dead) keys[k.forward] = true;
+    if (dy > dead) keys[k.back] = true;
+    if (dx < -dead) keys[k.left] = true;
+    if (dx > dead) keys[k.right] = true;
+  };
+  const stickAt = (t) => {
+    const b = stick.getBoundingClientRect();
+    const cx = b.left + b.width / 2, cy = b.top + b.height / 2;
+    const half = b.width / 2;
+    let dx = (t.clientX - cx) / half, dy = (t.clientY - cy) / half;
+    const r = Math.hypot(dx, dy);
+    if (r > 1) { dx /= r; dy /= r; }
+    knob.style.transform = 'translate(' + (dx * half * 0.55) + 'px,' +
+                           (dy * half * 0.55) + 'px)';
+    setMove(dx, dy);
+  };
+  stick.addEventListener('touchstart', (e) => {
+    e.preventDefault();
+    stickTouchId = e.changedTouches[0].identifier;
+    stickAt(e.changedTouches[0]);
+  }, { passive: false });
+  const stickEnd = () => {
+    stickTouchId = null;
+    knob.style.transform = '';
+    setMove(0, 0);
+  };
+  addEventListener('touchmove', (e) => {
+    for (const t of e.changedTouches) {
+      if (t.identifier === stickTouchId) { stickAt(t); e.preventDefault(); }
+      else if (t.identifier === lookTouchId) {
+        const px = t.__lx == null ? t.clientX : t.__lx;
+        void px;
+        applyLook((t.clientX - lookLast.x) * 1.6, (t.clientY - lookLast.y) * 1.6);
+        lookLast.x = t.clientX; lookLast.y = t.clientY;
+        e.preventDefault();
+      }
+    }
+  }, { passive: false });
+  addEventListener('touchend', (e) => {
+    for (const t of e.changedTouches) {
+      if (t.identifier === stickTouchId) stickEnd();
+      if (t.identifier === lookTouchId) lookTouchId = null;
+    }
+  });
+  addEventListener('touchcancel', stickEnd);
+
+  // the bare canvas is the look area: anywhere the controls are not
+  $('c').addEventListener('touchstart', (e) => {
+    if (!state.running || state.paused) return;
+    if (lookTouchId !== null) return;
+    const t = e.changedTouches[0];
+    lookTouchId = t.identifier;
+    lookLast.x = t.clientX; lookLast.y = t.clientY;
+  }, { passive: true });
+
+  // buttons -- press and release, so holding to turbo-build works
+  for (const b of document.querySelectorAll('#tbtns .tb')) {
+    const act = b.dataset.act;
+    const down = (e) => {
+      e.preventDefault();
+      b.classList.add('down');
+      if (act === 'fire') onPress({ button: 0 });
+      else if (act === 'jump') keys[settings.keys.jump] = true;
+      else if (act === 'crouch') keys[settings.keys.crouch] = !keys[settings.keys.crouch];
+      else if (act === 'reload') autoReload();
+      else if (act === 'rotate') { if (state.spectator) specToggleMode(); else rotateBuild(1); }
+      else if (act === 'edit') {
+        if (state.editing) {
+          const rec = pieces.get(edit.key);
+          if (rec && rec.mask !== fullMask(rec.type)) resetEdit(); else cancelEdit();
+        } else startEdit();
+      }
+    };
+    const up = (e) => {
+      e.preventDefault();
+      b.classList.remove('down');
+      if (act === 'fire') onRelease({ button: 0 });
+      else if (act === 'jump') keys[settings.keys.jump] = false;
+    };
+    b.addEventListener('touchstart', down, { passive: false });
+    b.addEventListener('touchend', up, { passive: false });
+    b.addEventListener('touchcancel', up, { passive: false });
+  }
+}
+/* The hand picker, rebuilt whenever the hotbar is -- same source of truth. */
+function drawTouchSlots() {
+  if (!TOUCH_ON) return;
+  const wrap = $('tslots');
+  wrap.innerHTML = '';
+  const add = (id, label) => {
+    const b = document.createElement('button');
+    b.textContent = label;
+    if (state.hand === id) b.className = 'on';
+    b.addEventListener('touchstart', (e) => { e.preventDefault(); setHand(id); },
+                       { passive: false });
+    wrap.appendChild(b);
+  };
+  for (const w of activeLoadout()) add(w, (SHORT_NAME[w] || w).slice(0, 4).toUpperCase());
+  for (const [id, n] of [['wall', 'WALL'], ['ramp', 'RAMP'], ['floor', 'FLOR'], ['roof', 'CONE']]) {
+    add(id, n);
+  }
+}
+const lookLast = { x: 0, y: 0 };
 
 $('c').addEventListener('pointerdown', (e) => { e.preventDefault(); });
 addEventListener('contextmenu', (e) => e.preventDefault());
@@ -4409,7 +5472,11 @@ addEventListener('keydown', (e) => {
     return;
   }
   if (act === 'reload') { autoReload(); return; }
-  if (act === 'rotate') { rotateBuild(1); return; }
+  if (act === 'rotate') {
+    // doubles as the free-cam toggle: a spectator has nothing to rotate
+    if (state.spectator) { specToggleMode(); return; }
+    rotateBuild(1); return;
+  }
   if (act === 'pickaxe') { setHand('pickaxe'); return; }
 });
 addEventListener('keyup', (e) => {
@@ -4470,6 +5537,9 @@ function frame(now) {
        both would fight for the camera every frame. */
     if (killcam.active) {
       updateKillcam(dt);
+    } else if (state.spectator) {
+      updateSpectate(dt);
+      sampleRemote(dt);
     } else {
       updateCamera(dt);
       updateGhost();
@@ -4485,8 +5555,23 @@ function frame(now) {
       const left = state.reloadUntil - performance.now();
       const f = clamp(1 - left / state.reloadFor, 0, 1);
       $('reloadbar').firstElementChild.style.width = (f * 100) + '%';
-      if (left <= 0) { state.reloading = null; $('reloadbar').firstElementChild.style.width = '0%'; }
+      if (left <= 0) {
+        state.reloading = null;
+        $('reloadbar').firstElementChild.style.width = '0%';
+        Audio_.reloadDone();          // the magazine seating, so you can hear
+      }                               // when you are live again without looking
     }
+    /* Low health beats faster the closer you are to dead. Deliberately a
+       heartbeat and not a beep: it has to register without competing with the
+       footsteps you are straining to hear. Shield is not counted -- it is the
+       HP running out that kills you. */
+    if (!state.dead && state.phase === 'live' && state.hp > 0 && state.hp <= 40) {
+      const f = 1 - state.hp / 40;                 // 0 at 40hp, 1 at death's door
+      hbAcc += dt;
+      if (hbAcc >= lerp(1.15, 0.5, f)) { hbAcc = 0; Audio_.heartbeat(0.45 + f * 0.55); }
+    } else hbAcc = 0;
+
+    if (state.mode === 'trainer' && course.gates.length) drawCourse();
     if (state.mode !== 'build' && state.phase === 'live' && !state.dead) {
       // client-side mats regen preview; server remains authoritative
       state.mats = Math.min(CFG.MAT_CAP, state.mats);
@@ -4568,6 +5653,9 @@ function bindToggle(id, key, onChange) {
 bindToggle('opt-turbo', 'turbo', (on) => { if (!on) firing = false; });
 bindToggle('opt-edithold', 'editHold', () => { if (state.editing) cancelEdit(); });
 bindToggle('opt-killcam', 'killcam', (on) => { if (!on) stopKillcam(); });
+bindToggle('opt-fpv', 'fpv');
+drawLifetime();        // the menu shows your record before you connect
+touchSetup();          // no-op unless the device actually reports touch
 function drawBinds() {
   const wrap = $('binds');
   wrap.innerHTML = '';
@@ -4645,7 +5733,8 @@ for (const el of document.querySelectorAll('.mode')) {
     refreshLobby();
   };
 }
-$('btnbot').onclick = () => Net.send({ t: 'addbot', diff: $('botdiff').value });
+$('btnbot').onclick = () => Net.send({ t: 'addbot', diff: $('botdiff').value,
+                                      style: $('botstyle').value });
 $('btnkick').onclick = () => Net.send({ t: 'kickbots' });
 $('btnstart').onclick = () => {
   $('lobbyerr').textContent = '';
