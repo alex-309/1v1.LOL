@@ -38,7 +38,7 @@ WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 # same stamp and shouts if the two disagree -- editing index.html and forgetting
 # to restart server.py leaves the old rules in charge, and the symptom (pieces
 # floating that the ghost said were illegal) looks exactly like a code bug.
-BUILD_ID = "BUILD 2026-09-05 build-at-your-feet"
+BUILD_ID = "BUILD 2026-09-16 replays-and-teams"
 TICK_HZ = 30.0
 TICK_DT = 1.0 / TICK_HZ
 

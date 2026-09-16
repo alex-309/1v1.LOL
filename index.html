@@ -978,7 +978,7 @@ if (!window.THREE) {
 /* =========================================================================
    0. Small utilities
    ========================================================================= */
-const BUILD_ID = 'BUILD 2026-09-05 build-at-your-feet';
+const BUILD_ID = 'BUILD 2026-09-16 replays-and-teams';
 const $ = (id) => document.getElementById(id);
 const clamp = (v, a, b) => v < a ? a : (v > b ? b : v);
 const lerp = (a, b, t) => a + (b - a) * t;
@@ -1508,7 +1508,16 @@ const Net = {
     ws.onmessage = (ev) => {
       let m; try { m = JSON.parse(ev.data); } catch (e) { return; }
       try { handleMsg(m); } catch (e) {
-        window.__fail('Error handling "' + m.t + '"', (e && e.stack) || String(e));
+        /* Name both versions. A stale page against a newer server throws here
+           in exactly the way a real bug does, and the two need telling apart
+           before anyone goes looking through the code for it. */
+        const mismatch = Net.serverBuild && Net.serverBuild !== BUILD_ID;
+        window.__fail('Error handling "' + m.t + '"',
+          ((e && e.stack) || String(e)) +
+          '\n\npage build:   ' + BUILD_ID +
+          '\nserver build: ' + (Net.serverBuild || '(none sent)') +
+          (mismatch ? '\n\nTHESE DO NOT MATCH. This page is stale -- hard-reload ' +
+                      '(Cmd-Shift-R) before reading anything into the stack above.' : ''));
       }
     };
     ws.onclose = () => {
@@ -4823,6 +4832,7 @@ function chatLine(from, msg) {
    process therefore looks exactly like a client bug -- pieces float that the
    ghost refused, edits do nothing -- so say so out loud instead. */
 function checkBuild(serverBuild) {
+  Net.serverBuild = serverBuild || null;   // for the crash report below
   const el = $('stale');
   if (serverBuild === BUILD_ID) { el.classList.add('hidden'); return; }
   // NB: no stamp at all is the *worst* case, not the safe one -- it means a
