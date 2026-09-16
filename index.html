@@ -73,6 +73,23 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:17px;heigh
 .card::before{content:"";position:absolute;left:0;top:0;width:64px;height:3px;
   background:linear-gradient(90deg,var(--accent),transparent)}
 
+/* A card has to fit the window it is drawn in, and these did not. The pause
+   card stood 1158px tall in a 713px laptop viewport, which put Resume and
+   Leave to lobby below the fold: Escape opened a menu with no visible way out
+   of it, and the game looked frozen. The veil scrolls, but nobody thinks to
+   scroll a pause menu.
+
+   So: cap the card at the viewport, scroll the SETTINGS, and pin the buttons
+   that actually end the menu where they can always be reached. */
+.card.tall{display:flex;flex-direction:column;max-height:calc(100vh - 48px);
+  padding-bottom:0}
+.cardbody{flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain;
+  margin-right:-14px;padding-right:14px}
+.cardfoot{flex:none;position:relative;padding:15px 0 26px}
+/* a hint that there is more above, rather than content cut off mid-word */
+.cardfoot::before{content:"";position:absolute;left:0;right:0;top:-20px;height:20px;
+  pointer-events:none;background:linear-gradient(180deg,rgba(10,15,23,0),rgba(10,15,23,.97))}
+
 .title{font:400 46px/1 var(--fh);letter-spacing:.02em;margin-bottom:6px}
 .title span{color:var(--accent);text-shadow:0 0 26px rgba(57,208,255,.5)}
 .title.sm{font-size:27px}
@@ -149,24 +166,38 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:17px;heigh
   border:1px solid var(--line2);padding:3px 7px;text-transform:uppercase;font-weight:700}
 .tag.host{color:var(--accent);border-color:rgba(57,208,255,.42)}
 
-/* Team picker. The two sides get cyan and amber rather than the cyan/red the
-   match itself uses: in game red means "shoot this", and a lobby badge that
-   says red about the person you are trying to team up WITH reads backwards. */
-.tpill{margin-left:auto;font:700 9.5px var(--fb);letter-spacing:.13em;
-  text-transform:uppercase;padding:4px 9px;border:1px solid var(--line2);
-  background:transparent;color:var(--dim2);cursor:pointer;flex:none;
-  transition:border-color .12s,color .12s,background .12s}
-.tag+.tpill{margin-left:8px}
-.tpill.t0{color:var(--accent);border-color:rgba(57,208,255,.45);
-  background:rgba(57,208,255,.08)}
-.tpill.t1{color:var(--mat);border-color:rgba(255,180,61,.45);
-  background:rgba(255,180,61,.08)}
-.tpill:disabled{cursor:default;opacity:.62}
-.tpill:not(:disabled):hover{border-color:currentColor}
-/* A side nobody chose is still a real side -- it is just one the match dealt
-   out, and saying so is the difference between "this is where I am" and "this
-   is where I asked to be". */
-.tpill.auto{border-style:dashed}
+/* The two sides, laid out as two sides. Picking a team used to mean noticing a
+   small pill at the end of your own row and understanding that clicking it
+   toggled you across -- which is not what anyone does when they are looking
+   for "how do I get on my friend's team". Here each side is a column you can
+   read at a glance and a button you can press to join. */
+#teams{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px}
+#teams.hidden{display:none}
+.tcol{background:#070c14;border:1px solid var(--line);display:flex;flex-direction:column;
+  clip-path:polygon(0 0,calc(100% - 10px) 0,100% 10px,100% 100%,10px 100%,0 calc(100% - 10px))}
+.tcol.t0{border-top:2px solid var(--accent)}
+.tcol.t1{border-top:2px solid var(--mat)}
+.tcol.mine{background:var(--panel2)}
+.tcol>h4{margin:0;padding:9px 11px 6px;font:700 9.5px var(--fb);letter-spacing:.16em;
+  text-transform:uppercase;display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.tcol.t0>h4{color:var(--accent)}
+.tcol.t1>h4{color:var(--mat)}
+.tcol>h4 u{text-decoration:none;font:400 16px var(--fh);color:var(--txt);letter-spacing:.02em}
+.tmem{flex:1 1 auto;display:flex;flex-direction:column;gap:2px;padding:0 7px 6px;min-height:56px}
+.tmem button{display:flex;align-items:center;gap:8px;width:100%;text-align:left;
+  padding:6px 7px;font:500 12.5px var(--fb);letter-spacing:.01em;text-transform:none;
+  background:transparent;border:1px solid transparent;color:var(--txt);clip-path:none}
+.tmem button:hover:not(:disabled){background:var(--panel2);border-color:var(--line2);color:#fff}
+.tmem button:disabled{opacity:1;color:var(--dim);cursor:default}
+.tmem button.me{color:#fff;font-weight:700}
+.tmem i{font-style:normal;font-size:9px;letter-spacing:.12em;color:var(--dim2);
+  text-transform:uppercase;margin-left:auto;flex:none}
+.tempty{padding:9px 8px;font-size:11.5px;color:var(--dim2)}
+.tjoin{margin:0 7px 8px;padding:9px 6px;font-size:10px;letter-spacing:.12em}
+.tjoin:disabled{opacity:.5}
+.tcol.t0 .tjoin:not(:disabled){border-color:rgba(57,208,255,.5);color:var(--accent)}
+.tcol.t1 .tjoin:not(:disabled){border-color:rgba(255,180,61,.5);color:var(--mat)}
+@media (max-width:460px){#teams{grid-template-columns:1fr}}
 .tsplit{display:flex;align-items:center;justify-content:center;gap:10px;
   margin:-8px 0 14px;font:700 9.5px var(--fb);letter-spacing:.18em;
   text-transform:uppercase;color:var(--dim2)}
@@ -326,6 +357,12 @@ body.touchmode #ammo{right:16px;bottom:216px}
 body.touchmode #killfeed{right:16px;top:14px;max-width:44vw}
 body.touchmode #chatlog{left:16px;bottom:288px;max-width:min(430px,46vw)}
 body.touchmode #chatin{left:16px;bottom:256px;width:min(430px,46vw)}
+
+/* The first-run question has to sit above every other veil. It shares .veil's
+   z-index with the main menu, and it comes FIRST in the document -- so at equal
+   stacking the menu painted over it: the chooser was invisible on load, and
+   then blocked the whole game the moment the menu hid behind a match. */
+#inputpick{z-index:70}
 
 /* input mode picker -- the same two cards wherever the choice is offered */
 .imodes{display:grid;grid-template-columns:1fr 1fr;gap:10px}
@@ -773,10 +810,12 @@ body.touchmode #chatin{left:16px;bottom:256px;width:min(430px,46vw)}
 
 <!-- ---------------- lobby ---------------- -->
 <div id="lobby" class="veil hidden">
-  <div class="card">
+  <div class="card tall">
     <div class="title sm">LOBBY</div>
     <div class="sub" id="lobbysub">Waiting for the host to start…</div>
+    <div class="cardbody">
     <div class="plist" id="plist"></div>
+    <div id="teams" class="hidden"></div>
     <div class="tsplit hidden" id="tsplit"></div>
     <div class="field">
       <label>Game mode</label>
@@ -828,16 +867,20 @@ body.touchmode #chatin{left:16px;bottom:256px;width:min(430px,46vw)}
       <label>How you are playing</label>
       <div class="imodes" data-inputpick></div>
     </div>
-    <button class="primary" id="btnstart" style="width:100%;padding:15px">Start match</button>
-    <div class="err" id="lobbyerr"></div>
+    </div>
+    <div class="cardfoot">
+      <button class="primary" id="btnstart" style="width:100%;padding:15px">Start match</button>
+      <div class="err" id="lobbyerr"></div>
+    </div>
   </div>
 </div>
 
 <!-- ---------------- pause ---------------- -->
 <div id="pause" class="veil hidden">
-  <div class="card" style="width:min(470px,100%)">
+  <div class="card tall" style="width:min(470px,100%)">
     <div class="title sm">PAUSED</div>
     <div class="sub">Resume to lock the mouse again.</div>
+    <div class="cardbody">
     <div class="field">
       <label>How you are playing</label>
       <div class="imodes" data-inputpick></div>
@@ -889,9 +932,12 @@ body.touchmode #chatin{left:16px;bottom:256px;width:min(430px,46vw)}
       <div id="binds"></div>
       <button id="btnresetbinds" class="ghost" style="width:100%;margin-top:8px;font-size:11px">Reset this preset to defaults</button>
     </div>
-    <div class="row">
-      <button class="primary" id="btnresume">Resume</button>
-      <button id="btnlobby" class="ghost">Leave to lobby</button>
+    </div>
+    <div class="cardfoot">
+      <div class="row">
+        <button class="primary" id="btnresume">Resume</button>
+        <button id="btnlobby" class="ghost">Leave to lobby</button>
+      </div>
     </div>
   </div>
 </div>
@@ -1668,7 +1714,7 @@ function showReconnecting(n) {
   const el = $('reconnect');
   el.classList.remove('hidden');
   el.querySelector('i').textContent = 'Attempt ' + n + ' of ' + RECONNECT_TRIES;
-  document.exitPointerLock && document.exitPointerLock();
+  releaseLock();
 }
 function hideReconnecting() { $('reconnect').classList.add('hidden'); }
 function showConnFail() {
@@ -1678,7 +1724,7 @@ function showConnFail() {
   $('hud').classList.add('hidden');
   $('connfail').classList.remove('hidden');
   state.running = false;
-  document.exitPointerLock && document.exitPointerLock();
+  releaseLock();
 }
 $('btnretry').onclick = () => location.reload();
 
@@ -5406,8 +5452,88 @@ function enterLobby() {
   $('endcard').classList.add('hidden');
   $('pause').classList.add('hidden');
   $('lobby').classList.remove('hidden');
-  document.exitPointerLock && document.exitPointerLock();
+  releaseLock();
   refreshLobby();
+}
+/* =========================================================================
+   Team selection.
+
+   Two columns, one per side, each listing who is on it and carrying a button
+   to join it. Sides are cyan and amber rather than the cyan/red the match
+   itself uses: in game red means "shoot this", and a lobby badge that says red
+   about the person you are trying to team up WITH reads backwards.
+
+   Who may move whom is the server's rule (see setteam) and this only mirrors
+   it: your own side is yours, everyone else's is the host's, and a bot's is
+   always the host's because a bot has nobody to ask. `count` is filled in here
+   because the balance line underneath needs the same numbers.
+   ========================================================================= */
+function drawTeams(isHost, count) {
+  const wrap = $('teams');
+  wrap.innerHTML = '';
+  const mySide = myTeam();
+  const sides = [[], []];
+  for (const p of state.players.values()) {
+    const side = p.team || 0;
+    count[side]++;
+    sides[side].push(p);
+  }
+  for (let side = 0; side < 2; side++) {
+    const col = document.createElement('div');
+    col.className = 'tcol t' + side + (side === mySide ? ' mine' : '');
+
+    const h = document.createElement('h4');
+    const label = document.createElement('span');
+    label.textContent = 'Team ' + (side + 1) + (side === mySide ? ' — yours' : '');
+    const n = document.createElement('u');
+    n.textContent = count[side];
+    h.appendChild(label); h.appendChild(n);
+    col.appendChild(h);
+
+    const mem = document.createElement('div');
+    mem.className = 'tmem';
+    if (!sides[side].length) {
+      const e = document.createElement('div');
+      e.className = 'tempty';
+      e.textContent = 'Nobody yet';
+      mem.appendChild(e);
+    }
+    for (const p of sides[side]) {
+      const mine = p.id === state.myId;
+      const b = document.createElement('button');
+      if (mine) b.className = 'me';
+      const dot = document.createElement('span');
+      dot.className = 'dot' + (p.bot ? ' bot' : '');
+      const nm = document.createElement('span');
+      nm.textContent = p.name + (mine ? ' (you)' : '');
+      b.appendChild(dot); b.appendChild(nm);
+      const tagText = p.id === state.hostId ? 'host' : (p.bot ? 'bot' : '');
+      if (tagText) {
+        const t = document.createElement('i'); t.textContent = tagText; b.appendChild(t);
+      }
+      /* Clicking a name sends it across. A side nobody chose is still a real
+         side -- it is just one the match dealt out -- so say which is which
+         rather than letting an assigned seat look like a decision. */
+      if (mine || isHost) {
+        b.title = (mine ? 'Move yourself' : 'Move ' + p.name) + ' to Team ' + (2 - side) +
+                  (p.pick == null ? ' (placed automatically)' : '');
+        b.onclick = () => Net.send({ t: 'setteam', id: p.id, team: 1 - side });
+      } else {
+        b.disabled = true;
+        b.title = 'Only ' + p.name + ' or the host can move them';
+      }
+      mem.appendChild(b);
+    }
+    col.appendChild(mem);
+
+    const join = document.createElement('button');
+    join.className = 'tjoin';
+    join.textContent = side === mySide ? 'You are here' : 'Join Team ' + (side + 1);
+    join.disabled = side === mySide;
+    join.onclick = () => Net.send({ t: 'setteam', id: state.myId, team: side });
+    col.appendChild(join);
+    wrap.appendChild(col);
+  }
 }
 function refreshLobby() {
   const list = $('plist');
@@ -5415,6 +5541,11 @@ function refreshLobby() {
   const isHost = state.myId === state.hostId;
   const teamMode = chosenMode === 'team';
   const count = [0, 0];
+  /* In team mode the two columns below ARE the roster, so the flat list stands
+     down instead of repeating every name a few pixels higher up. */
+  list.classList.toggle('hidden', teamMode);
+  if (teamMode) drawTeams(isHost, count);
+  $('teams').classList.toggle('hidden', !teamMode);
   for (const p of state.players.values()) {
     const d = document.createElement('div');
     d.className = 'pitem' + (p.id === state.myId ? ' me' : '');
@@ -5429,24 +5560,6 @@ function refreshLobby() {
     } else if (p.bot) {
       const t = document.createElement('span'); t.className = 'tag'; t.textContent = 'bot';
       d.appendChild(t);
-    }
-    if (teamMode) {
-      /* Your own side is yours to change. Everyone else's is the host's --
-         bots especially, since a bot has nobody else to ask. */
-      const side = p.team || 0;
-      count[side]++;
-      const pill = document.createElement('button');
-      pill.className = 'tpill t' + side + (p.pick == null ? ' auto' : '');
-      pill.textContent = 'Team ' + (side + 1);
-      const mine = p.id === state.myId;
-      if (mine || isHost) {
-        pill.title = mine ? 'Switch sides' : 'Move ' + p.name;
-        pill.onclick = () => Net.send({ t: 'setteam', id: p.id, team: 1 - side });
-      } else {
-        pill.disabled = true;
-        pill.title = 'Only ' + p.name + ' or the host can move them';
-      }
-      d.appendChild(pill);
     }
     list.appendChild(d);
   }
@@ -5606,7 +5719,7 @@ function showEnd(m) {
   recordLifetime(m);
   $('endcard').classList.remove('hidden');
   state.running = false;
-  document.exitPointerLock && document.exitPointerLock();
+  releaseLock();
   const isHost = state.myId === state.hostId;
   $('btnrematch').disabled = !isHost;
 }
@@ -5614,7 +5727,9 @@ function showEnd(m) {
 /* =========================================================================
    17. Input
    ========================================================================= */
-let lockFailed = false;
+let lockFailed = false;        // refused at least once: drag-look is the fallback
+let lockNagged = false;        // the gate has said its piece; stop re-raising it
+let lockExitWanted = false;    // WE let go, as opposed to the player pressing Esc
 function requestLock() {
   /* Nothing to lock in touch mode, and asking anyway is not harmless: a
      browser with no pointer to capture answers with pointerlockerror, whose
@@ -5622,8 +5737,27 @@ function requestLock() {
      the gate swallowed the next tap, and that loop is what made a touchscreen
      unplayable rather than merely awkward. */
   if (touchMode()) return;
+  if (!state.running || state.paused) return;   // nothing to aim at yet
   const c = $('c');
-  if (c.requestPointerLock) c.requestPointerLock();
+  if (!c.requestPointerLock || document.pointerLockElement === c) return;
+  let p;
+  try { p = c.requestPointerLock(); } catch (e) { return; }
+  /* Current Chrome returns a promise here. A rejected one with nobody
+     listening prints "Uncaught (in promise) NotAllowedError" in the player's
+     console on every refused lock -- and since a click asks for a lock, a
+     browser in its post-Esc cooldown produced one per click. The refusal is
+     already reported through pointerlockerror; this just stops the noise. */
+  if (p && p.catch) p.catch(() => {});
+}
+/* Every deliberate release goes through here so pointerlockchange can tell
+   "we let go" from "the player pressed Esc". Only flag it when there is
+   actually a lock to drop, or the flag outlives the exit and swallows the
+   player's next Esc. */
+function releaseLock() {
+  if (document.pointerLockElement) {
+    lockExitWanted = true;
+    document.exitPointerLock();
+  }
 }
 /* A refused pointer-lock request fires pointerlockerror and nothing else --
    pointerlockchange never runs. Without this the game just eats every click
@@ -5631,23 +5765,44 @@ function requestLock() {
 document.addEventListener('pointerlockerror', () => {
   if (touchMode()) return;          // expected: there is no pointer to lock
   lockFailed = true;
+  /* Say it ONCE. onPress asks for a lock on every click, so re-raising the
+     gate on every refusal meant: click to dismiss it, click to shoot, gate
+     back up, forever -- a live match running behind a wall you could not get
+     past. After the first telling the player keeps playing with drag-look and
+     clicks keep quietly trying to re-lock. */
+  if (!state.running || state.paused || lockNagged) return;
+  lockNagged = true;
   const cp = $('clickplay');
   cp.classList.remove('hidden');
-  const line = cp.querySelector ? cp.querySelector('span') : null;
-  if (line) {
-    line.textContent = 'your browser blocked mouse lock — you can still play, ' +
-                       'but look with click-drag';
-  }
+  cp.lastElementChild.textContent =
+    'your browser blocked mouse lock — click to try again, or look by dragging';
 });
 document.addEventListener('pointerlockchange', () => {
   if (touchMode()) return;          // the gate is dismissed by tapping it
-  const locked = document.pointerLockElement === $('c');
-  const inMatch = state.running && !state.paused &&
-                  $('endcard').classList.contains('hidden') &&
-                  $('chatin').style.display !== 'block';
+  if (document.pointerLockElement === $('c')) {
+    // it works after all: forget every refusal and put the wording back
+    lockFailed = lockNagged = lockExitWanted = false;
+    paintGate();
+    $('clickplay').classList.add('hidden');
+    return;
+  }
+  const wanted = lockExitWanted;
+  lockExitWanted = false;
+  if (!state.running || !$('endcard').classList.contains('hidden') ||
+      $('chatin').style.display === 'block') return;
+  /* THE ESCAPE BUG. The browser treats Esc as its own gesture for leaving
+     pointer lock and does NOT deliver the keydown to the page -- so the
+     handler that opens the pause menu never ran, and the player got a CLICK TO
+     PLAY gate instead of the menu they asked for. Pressing Esc a second time
+     DID reach the page, which is why the menu always seemed to need two goes.
+
+     An exit we did not ask for is the player asking for the menu, so treat it
+     as one. */
+  if (!wanted && !state.paused) { pause(true); return; }
   // Losing the lock shows a click-to-resume prompt rather than leaving you
-  // invisibly not-in-control.
-  $('clickplay').classList.toggle('hidden', locked || !inMatch);
+  // invisibly not-in-control -- but not on top of a menu, and not if locking
+  // is refused outright, which would put the wall straight back.
+  if (!state.paused && !lockFailed) $('clickplay').classList.remove('hidden');
 });
 /* The gate takes any pointer, because it is the one thing both modes need to
    get past. In mouse mode onPress still swallows this same click below -- the
@@ -5668,7 +5823,7 @@ function pause(on) {
   $('pause').classList.toggle('hidden', !on);
   syncTouchUI(true);
   if (!on) requestLock();
-  else document.exitPointerLock && document.exitPointerLock();
+  else releaseLock();
 }
 
 let dragLook = false;
@@ -6053,7 +6208,7 @@ function setInputMode(m) {
     if (!touchMode() && state.running && !state.paused) {
       $('clickplay').classList.remove('hidden');
     } else if (touchMode()) {
-      document.exitPointerLock && document.exitPointerLock();
+      releaseLock();
     }
   }
   drawInputPickers();
@@ -6184,7 +6339,7 @@ addEventListener('keydown', (e) => {
 
   const act = keyAction[k];
   if (act === 'chat') {
-    document.exitPointerLock && document.exitPointerLock();
+    releaseLock();
     $('chatin').style.display = 'block';
     $('chatin').focus();
     return;
