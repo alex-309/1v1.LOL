@@ -133,6 +133,18 @@ no code changes at all.
 
 ## Controls
 
+The game asks once, on first load, whether you are playing with a **mouse and
+keyboard** or a **touchscreen**, and remembers the answer. It is not guessed
+from the hardware, because the hardware does not know: every touchscreen laptop
+reports touch whether or not anybody intends to use it. You can change your mind
+any time from the main menu, from the lobby before you join, or from the pause
+menu mid-match.
+
+Menus take a mouse **and** a finger in either mode. The mode decides what
+happens once you are in the match, not how you get there.
+
+### Mouse and keyboard
+
 | | |
 |---|---|
 | `W A S D` | Move |
@@ -149,8 +161,28 @@ no code changes at all.
 | `Tab` | Scoreboard · `Enter` chat · `Esc` pause |
 | Mouse wheel | Cycle weapons |
 
-Three switches live in the pause menu next to the binds, because they are
-preference rather than balance:
+### Touchscreen
+
+Phones and tablets get the mode by default; anything else has to ask for it.
+
+| | |
+|---|---|
+| Left stick | Move — drag anywhere the controls are not to look |
+| `JUMP` `CRCH` | Jump, and crouch as a latch rather than a hold |
+| `AIM` | Aim down sights, also a latch — a touchscreen cannot ask you to hold a modifier with both thumbs already busy |
+| `FIRE` | Fire or place a piece; hold to turbo-build |
+| `R` `EDIT` `ROT` | Reload, edit a piece, rotate the ramp or cone |
+| Slot row | The chips along the bottom pick your weapon or build piece |
+| `MENU` `SCORE` | Top left: pause and settings, and the scoreboard (tap it again to close) |
+
+Two fingers work at once, so you can walk and look at the same time. **Look
+speed** has its own slider in the pause menu — a thumb swipe and a mouse move
+are not the same unit, so sharing one sensitivity setting could only ever suit
+one of them.
+
+### Pause menu
+
+Switches that are preference rather than balance:
 
 | Option | Default | What it does |
 |---|---|---|
@@ -158,6 +190,11 @@ preference rather than balance:
 | **Edit on release** | off | Hold the edit key, drag, let go to apply — one motion instead of three. Off keeps the press-to-enter / press-to-reset toggle. |
 | **First person** | off | Camera at the eye with a viewmodel. Third person is easier to build in, which is why this is a switch and not a replacement. |
 | **Instant replay** | on | On death, replay the last 2.6s from your killer's view. Click to skip, click again to rewatch. Off still leaves you the death-spot camera. |
+
+Alongside them: the input mode, mouse sensitivity (mouse mode) or look speed
+(touch mode), field of view and volume. The settings scroll; **Resume** and
+**Leave to lobby** stay pinned to the bottom of the card where you can always
+reach them.
 
 Every key is rebindable in the pause menu (`Esc`), and there are **three
 independent presets** — say one for a mouse, one for a trackpad, one for whoever
@@ -216,10 +253,12 @@ circle, so the furthest wall you can place is one floor tile closer than it was.
 Walls are the piece you throw out under pressure, and the extra box let you seal
 off ground you had no business holding.
 
-**On a phone or tablet** the game mounts a left stick, a look area and a button
-pad — but only where touch is actually reported. They route through the same
-`keys[]` table and the same press/release handlers the mouse and keyboard use,
-so there is no second input path to keep in step.
+**In touch mode** the game mounts a left stick, a look area and a button pad —
+when the player has *chosen* that mode, not merely because the device reports a
+touchscreen. They route through the same `keys[]` table and the same
+press/release handlers the mouse and keyboard use, so there is no second input
+path to keep in step. The HUD moves inboard to make room, since the corners it
+normally lives in are where the controls now are.
 
 **Rotation.** `T` turns a held ramp or cone by a quarter turn, so you can lay a
 ramp across your path instead of along it — the one orientation you cannot get
@@ -455,17 +494,27 @@ The first person to connect is the host, picks the mode, and can override the
 map — Open Yard, Box Fight or Towers — or leave it on Auto for whatever the mode
 wants.
 
-**Picking sides.** Choose Team Fight in the lobby and every player grows a
-side badge. **Click your own to switch**; the host can click anybody's,
-including the bots', because a bot has nobody else to ask. Under the list is the
-live split — `2 · a side · 2` — turning red if one side is empty, which is worth
-knowing before you press start rather than after.
+**Picking sides.** Choose Team Fight in the lobby and the player list becomes
+**two columns, one per side**, each showing who is on it and carrying a **Join
+Team 1 / Join Team 2** button. Press the other side's button to move yourself.
+As host you can also click any *name* to send that player across — bots very
+much included, because a bot has nobody else to ask. The column you are on is
+marked "yours" and its button reads "You are here".
+
+Under the columns is the live split — `2 · a side · 2` — turning red if one side
+is empty, which is worth knowing before you press start rather than after. An
+empty column says so in place of a roster.
+
+The sides are cyan and amber rather than the cyan and red the match itself
+uses. In game red means "shoot this", and a lobby badge that says red about the
+person you are trying to team up *with* reads backwards.
 
 Sides are settled as people arrive rather than dealt out at the whistle:
 everyone is seated onto the smaller side the moment they join, so the lobby has
-been showing the real split all along. A side you actually clicked is a decision
-and survives the start; a dashed badge is one the game seated you on and is free
-to be changed. The only thing the start second-guesses is an *empty* side —
+been showing the real split all along. A side you actually chose is a decision
+and survives the start; one the game seated you on is free to be changed — hover
+a name and the tooltip says which it was. The only thing the start
+second-guesses is an *empty* side —
 that reads to the win check as a wipe and would hand out a round a second — so
 if everybody piled onto one colour the last of them gets moved over and told so
 in the killfeed. A 3v1 somebody asked for on purpose is left alone.
@@ -555,6 +604,19 @@ menu, and `http://localhost:7777/whoami` reports what is actually running.
 line. If it mentions three.js, run `start.command` once while online so it can
 download `three.min.js` (633 KB) next to `index.html`.
 
+**"Your browser blocked mouse lock."** Some browsers and extensions refuse
+pointer lock outright. The game says so once and then lets you play anyway —
+look by holding the left button and dragging. Clicking keeps quietly retrying,
+and the moment a lock succeeds the message clears itself.
+
+**Escape opens the pause menu on the first press.** It did not always: browsers
+treat Escape as *their own* gesture for leaving pointer lock and never deliver
+the keydown to the page, so the handler that opens the menu never ran and you
+got a "click to play" overlay instead — press Escape a second time and that one
+arrived. The game now reads an unrequested loss of pointer lock as the request
+it actually was. If you are on a touchscreen there is no Escape key at all: use
+the **MENU** button top left.
+
 **The screen goes white.** Two different faults wore this face. A muzzle flash
 is a bright sphere at the shooter's eye, and the third-person camera collapses
 onto your eye when your back is against a wall — so your own flash, or one from
@@ -588,8 +650,8 @@ loadout, 10 materials per piece, and duel rounds. All art, sound and UI are gene
 textures, WebAudio-synthesized effects, blocky characters — so nothing is copied
 from the original game, and there's no branding.
 
-Deliberately not included: accounts, ranked play, matchmaking, cosmetics, a map
-rotation, and touch controls (desktop only). The
+Deliberately not included: accounts, ranked play, matchmaking, cosmetics and a
+map rotation. The
 server validates fire rate, ammo, range, line of sight and
 movement plausibility, which is the right level for playing with a friend — it
 is not hardened anti-cheat.
