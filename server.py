@@ -128,6 +128,10 @@ CONFIG = {
     "SPAWN_PROTECT": 2.0,
     "RESPAWN_TIME": 3.0,
     "ROUND_COUNTDOWN": 3.0,
+    # A round that ends on a kill owes everyone the replay of it before the
+    # card goes up. Kept here rather than only in the client so the countdown
+    # and the replay cannot drift apart.
+    "REPLAY_TIME": 2.6,
     "DUEL_TARGET": 5,
     "DM_TARGET": 15,
     "TEAM_TARGET": 5,        # rounds to win a 2v2
@@ -1323,6 +1327,9 @@ class Game(object):
             "token": uuid.uuid4().hex,
             "offline_since": 0.0,
             "team": 0,                  # only meaningful in a team mode
+            # A side somebody actually chose in the lobby, as opposed to one
+            # the match handed out. None means "put me wherever".
+            "team_pick": None,
             "tr": None,                 # build-trainer run state
             # bot-only scratch
             "bt": {"state": "IDLE", "target": None, "next_fire": 0.0,
@@ -1337,7 +1344,8 @@ class Game(object):
                 "hp": p["hp"], "shield": p["shield"], "alive": p["alive"],
                 "kills": p["kills"], "deaths": p["deaths"],
                 "spectator": p["spectator"], "pos": p["pos"], "yaw": p["yaw"],
-                "offline": bool(p["offline_since"]), "team": p["team"]}
+                "offline": bool(p["offline_since"]), "team": p["team"],
+                "pick": p["team_pick"]}
 
     def broadcast(self, msg, droppable=False, exclude=None):
         for pid, c in list(self.clients.items()):
@@ -1906,6 +1914,7 @@ class Game(object):
         if killer and killer is not target:
             killer["kills"] += 1
         self._last_round_winner = by_pid if (killer and killer is not target) else None
+        self._round_kill = True        # this round owes a replay
         # How long the corpse waits, so the client can run a respawn clock
         # rather than guessing. Round-based modes respawn on the round, not on
         # a timer, and say so with 0.
@@ -1927,6 +1936,50 @@ class Game(object):
         else:
             target["respawn_at"] = time.time() + CONFIG["RESPAWN_TIME"]
         self.check_win()
+
+    def seat_team(self, p):
+        """Give an arrival a provisional side, so the lobby shows the truth.
+
+        The alternative is leaving everyone on team 0 until the match starts
+        and dealing them out then, which means the lobby shows a split that is
+        not the one anybody is about to play. Sides you can see are sides you
+        can argue with, which is the entire point of letting people pick.
+        """
+        if p["team_pick"] in (0, 1):
+            p["team"] = p["team_pick"]
+            return
+        count = [0, 0]
+        for q in self.players.values():
+            if q is not p and not q["spectator"]:
+                count[q["team"]] += 1
+        p["team"] = 0 if count[0] <= count[1] else 1
+
+    def balance_teams(self, playing, count):
+        """Move players off a stacked side until neither side is empty.
+
+        Only ever runs when a side would be empty -- a 3v1 somebody asked for
+        is a 3v1, and second-guessing a lopsided pick people made on purpose is
+        not this function's job.
+        """
+        moved = []
+        for side in (0, 1):
+            other = 1 - side
+            # take from the back, so the first person to pick a side keeps it
+            while count[side] == 0 and count[other] > 1:
+                for p in reversed(playing):
+                    if p["team"] == other:
+                        p["team"] = side
+                        p["team_pick"] = side
+                        count[other] -= 1
+                        count[side] += 1
+                        moved.append(p)
+                        break
+        for p in moved:
+            self.broadcast({"t": "team", "id": p["id"], "team": p["team"]})
+            self.send_to(p["id"], {"t": "note",
+                                   "m": "Both sides were empty of opponents — "
+                                        "you were moved to Team %d." % (p["team"] + 1)})
+        return moved
 
     def team_wiped(self):
         """The team that has just been eliminated, or None."""
@@ -2043,6 +2096,7 @@ class Game(object):
 
     _last_round_winner = None
     _last_round_team = None
+    _round_kill = False
 
     def end_round(self):
         if is_team(self.mode):
@@ -2053,7 +2107,12 @@ class Game(object):
                 self._last_round_team = 1 - lost
         self.round_no += 1
         self.phase = "countdown"
-        self.phase_until = time.time() + CONFIG["ROUND_COUNTDOWN"]
+        # The replay plays first and the card follows it, so the countdown has
+        # to cover both -- otherwise the card a player is meant to read gets
+        # whatever is left of three seconds after a 2.6s replay.
+        replay = CONFIG["REPLAY_TIME"] if self._round_kill else 0.0
+        self._round_kill = False
+        self.phase_until = time.time() + CONFIG["ROUND_COUNTDOWN"] + replay
         self.wipe_builds()
         parts = self.participants()
         for i, p in enumerate(parts):
@@ -2063,6 +2122,7 @@ class Game(object):
         # like a match, it feels like the same fight restarting.
         self.broadcast({"t": "round", "n": self.round_no,
                         "until": CONFIG["ROUND_COUNTDOWN"],
+                        "replay": replay,
                         "goal": target_for(self.mode),
                         "by": self._last_round_winner,
                         "team": self._last_round_team if is_team(self.mode) else None,
@@ -2085,6 +2145,7 @@ class Game(object):
         self.round_no = 0
         self.team_score = [0, 0]
         self._last_round_team = None
+        self._round_kill = False
         self.winner = None
         self.grenades = []
         self.targets = []
@@ -2107,16 +2168,27 @@ class Game(object):
             for i, p in enumerate(parts):
                 p["spectator"] = i >= 2
         if is_team(mode):
-            # Alternate rather than split down the middle: whoever joined first
-            # would otherwise always end up on the same side as the other early
-            # joiners, and with bots that reliably means all the humans vs all
-            # the bots. Up to 8, the rest spectate.
+            # Sides are already settled: seat_team() gave every arrival one as
+            # they joined and setteam overrode it for anyone who cared, so the
+            # lobby has been showing the real split all along. Nothing is dealt
+            # out here -- the start only re-reads the picks and refuses to run
+            # with an empty side. Up to 8 play, the rest spectate.
             for i, p in enumerate(parts):
                 p["spectator"] = i >= 8
-                p["team"] = i % 2
-        else:
-            for p in parts:
-                p["team"] = 0
+            playing = [p for p in parts if not p["spectator"]]
+            count = [0, 0]
+            for p in playing:
+                if p["team_pick"] in (0, 1):
+                    p["team"] = p["team_pick"]
+                count[p["team"]] += 1
+            # An empty side is not a match: team_wiped() reads it as a wipe and
+            # hands out a round a second until someone wins. If everybody picked
+            # the same colour, the last of them gets moved and told so.
+            self.balance_teams(playing, count)
+        # Every other mode ignores sides rather than clearing them: friendly
+        # fire, spawns, the win check and bot targeting all gate on is_team()
+        # already, and wiping the field here would throw away a lobby's worth
+        # of picks the moment somebody tried a round of deathmatch.
         for i, p in enumerate(self.participants()):
             self.spawn(p, index=self.team_spawn_index(p) if is_team(mode) else i)
         for p in self.players.values():
@@ -2232,6 +2304,8 @@ class Game(object):
         self.clients[pid] = client
         if self.host is None:
             self.host = pid
+        if not rejoined:
+            self.seat_team(p)      # a rejoin keeps the side it left on
         client.send(self.welcome(p, rejoined))
         if rejoined:
             self.broadcast({"t": "rejoin", "p": self.public_player(p)}, exclude=pid)
@@ -2608,8 +2682,13 @@ class Game(object):
             return
         boxes = self.collision_boxes(exclude_pid=p["id"])
 
+        # Teammates are not targets. Friendly fire is already refused in
+        # apply_damage, so a bot chasing its own partner did no damage -- it
+        # just spent the round doing that instead of fighting, which is worse
+        # than useless in the one mode where a partner is the point.
         enemies = [q for q in self.players.values()
-                   if q["id"] != p["id"] and q["alive"] and not q["spectator"]]
+                   if q["id"] != p["id"] and q["alive"] and not q["spectator"]
+                   and not (is_team(self.mode) and q["team"] == p["team"])]
         target = None
         if enemies:
             target = min(enemies, key=lambda q: v_dist(q["pos"], p["pos"]))
@@ -2918,6 +2997,32 @@ class Game(object):
                 self.edit_piece(p, str(m.get("key", "")), int(m.get("mask", FULL_MASK)))
             return
 
+        if t == "setteam":
+            # Picking sides is not a host-only act, which is why this sits
+            # above the host gate rather than below it: the whole complaint it
+            # answers is being dropped onto the side you did not want and
+            # having to ask someone else to move you.
+            if self.phase != "lobby":
+                return
+            try:
+                who = int(m.get("id", pid))
+                side = int(m.get("team", 0))
+            except (TypeError, ValueError):
+                return
+            if side not in (0, 1):
+                return
+            # Your own side is yours to pick. Everyone else's -- bots very much
+            # included, since a bot cannot pick for itself -- is the host's.
+            if who != pid and pid != self.host:
+                return
+            q = self.players.get(who)
+            if q is None:
+                return
+            q["team"] = side
+            q["team_pick"] = side
+            self.broadcast({"t": "team", "id": who, "team": side})
+            return
+
         if t == "switch":
             h = m.get("hand")
             if self.can_use(h) or h in CONFIG["BUILD_PIECES"]:
@@ -2961,6 +3066,7 @@ class Game(object):
             label = CONFIG["BOT_STYLE"][style]["label"]
             b = self.new_player("Bot %d (%s %s)" % (n, diff, label),
                                 is_bot=True, diff=diff, style=style)
+            self.seat_team(b)
             self.broadcast({"t": "join", "p": self.public_player(b)})
             return
 

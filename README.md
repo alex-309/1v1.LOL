@@ -349,6 +349,22 @@ either direction, as often as the wait allows — a replay you skipped is never
 gone, and watching it twice costs nothing. The panel counts your respawn down,
 or says it is the round you are waiting on.
 
+**In a duel both players watch it.** One death *is* the round there, so the
+survivor has nothing to do with the next few seconds either — they get the same
+replay, filmed over the same shoulder, which happens to be their own. They have
+no death spot to fall through to afterwards, because they are not dead: the tape
+ends and the live camera takes back over. Anywhere else only the person who died
+watches, because the fight carries on around everyone else and taking a living
+player's camera away would get them killed.
+
+**The round card waits for the replay.** A round that ends on a kill broadcasts
+`round` in the same tick as the `die` that caused it, and the card used to tear
+the death screen down the frame it was built — which is what stopped replays
+working in duels and team fights at all. The card is now what waits. The server
+adds `REPLAY_TIME` to the countdown for any round that ended on a kill, so
+holding the card back costs it nothing: the three seconds it is meant to be read
+for are still three seconds.
+
 Neither costs anything on the wire. The snapshot buffer already holds every
 player's position, yaw and pitch, so the replay is the same interpolation run
 with the camera parented somewhere else. The one thing it could not do before
@@ -378,20 +394,25 @@ much either: you are always blue and everyone shooting at you is always red,
 which answers *can I shoot this* on its own.
 
 **The combat report** is where a name gets attached to a number instead, down
-the right of the screen. Take a hit and a row names who did it, with what, from
-how far, and how much health you have left; land one and you get the same row
-about them. Colour carries the direction and nothing else, on the rule the
-player models already follow — **cyan is you, red is them**, so a cyan row is
-damage you dealt and a red row is damage you took. A kill leaves the pair for
-gold.
+the right of the screen — and it is a **death-screen** thing, not a HUD thing.
+While you are alive it accumulates in silence: mid-fight it would be noise
+competing with the hitmarker and the floating damage numbers, which already say
+what just landed. It goes up in one piece when you go down.
 
-It is one row per player per exchange, not one per bullet: a rifle burst is a
-single event to whoever is on either end of it, and three rows saying 22 tell
-you less than one row saying 66 ×3. A row still on screen absorbs the next hit
-from the same player and resets its own clock, so the number grows while the
-fight is happening and settles when it stops. Rows freeze while you are dead —
-the report of the fight that just killed you is the one you most want to read,
-and it must not time out underneath the screen that exists to show it.
+Then a row names who hit you, with what, from how far, and how much health you
+had left; and the same row about anyone you hit. Colour carries the direction
+and nothing else, on the rule the player models already follow — **cyan is you,
+red is them**, so a cyan row is damage you dealt and a red row is damage you
+took. A kill leaves the pair for gold. Only the player who died gets it; a duel
+survivor watching the replay does not.
+
+It is one row per player per *engagement*, not one per bullet: a rifle burst is
+a single event to whoever is on either end of it, and three rows saying 22 tell
+you less than one row saying 66 ×3. What bounds an engagement is a lull — ten
+seconds of nobody hitting anybody ends it, and the next shot opens a fresh row,
+which is what keeps the screen showing the fight that killed you rather than
+everyone you have met since you last spawned. Rows freeze while the screen is
+up, so nothing ages out from underneath the thing that exists to show it.
 
 The two directions reach the client differently, and the difference is real.
 Damage you took rides the `you` message you were already getting; damage you
@@ -418,7 +439,8 @@ someone with 3hp left is 3 damage in both places.
   the useful ground is all above you and the only way onto it is to build. No
   friendly fire, and the round ends when a whole side is down rather than on
   the first kill — the 2-on-1 after a trade is the entire reason to play with a
-  partner. First to 5 rounds. Needs 3+.
+  partner. First to 5 rounds. Needs 3+. **Pick your side in the lobby** — see
+  below.
 - **Deathmatch** — respawn after 3 seconds, builds persist, first to 15. Any
   number of players and bots.
 - **Build Trainer** — timed courses of gates you can only reach by building,
@@ -432,6 +454,33 @@ someone with 3hp left is 3 damage in both places.
 The first person to connect is the host, picks the mode, and can override the
 map — Open Yard, Box Fight or Towers — or leave it on Auto for whatever the mode
 wants.
+
+**Picking sides.** Choose Team Fight in the lobby and every player grows a
+side badge. **Click your own to switch**; the host can click anybody's,
+including the bots', because a bot has nobody else to ask. Under the list is the
+live split — `2 · a side · 2` — turning red if one side is empty, which is worth
+knowing before you press start rather than after.
+
+Sides are settled as people arrive rather than dealt out at the whistle:
+everyone is seated onto the smaller side the moment they join, so the lobby has
+been showing the real split all along. A side you actually clicked is a decision
+and survives the start; a dashed badge is one the game seated you on and is free
+to be changed. The only thing the start second-guesses is an *empty* side —
+that reads to the win check as a wipe and would hand out a round a second — so
+if everybody piled onto one colour the last of them gets moved over and told so
+in the killfeed. A 3v1 somebody asked for on purpose is left alone.
+
+Picks also survive a detour through another mode. Deathmatch and the rest ignore
+sides rather than clearing them — friendly fire, spawns, the win check and bot
+targeting all gate on the mode already — so a round of something else does not
+cost the lobby its arrangement.
+
+**Bots do not hunt their own side.** Friendly fire was already refused in
+`apply_damage`, so a bot chasing its partner never actually damaged them — it
+just spent the round doing that instead of fighting, which is worse than useless
+in the one mode where having a partner is the point. Bot target selection now
+skips teammates in team modes, and only in team modes: in a deathmatch the
+nearest player is still the nearest player.
 
 **Bots have a difficulty and a style, and they are separate questions.**
 Difficulty (Easy / Medium / Hard) tunes reaction time, accuracy and build

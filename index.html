@@ -149,6 +149,32 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:17px;heigh
   border:1px solid var(--line2);padding:3px 7px;text-transform:uppercase;font-weight:700}
 .tag.host{color:var(--accent);border-color:rgba(57,208,255,.42)}
 
+/* Team picker. The two sides get cyan and amber rather than the cyan/red the
+   match itself uses: in game red means "shoot this", and a lobby badge that
+   says red about the person you are trying to team up WITH reads backwards. */
+.tpill{margin-left:auto;font:700 9.5px var(--fb);letter-spacing:.13em;
+  text-transform:uppercase;padding:4px 9px;border:1px solid var(--line2);
+  background:transparent;color:var(--dim2);cursor:pointer;flex:none;
+  transition:border-color .12s,color .12s,background .12s}
+.tag+.tpill{margin-left:8px}
+.tpill.t0{color:var(--accent);border-color:rgba(57,208,255,.45);
+  background:rgba(57,208,255,.08)}
+.tpill.t1{color:var(--mat);border-color:rgba(255,180,61,.45);
+  background:rgba(255,180,61,.08)}
+.tpill:disabled{cursor:default;opacity:.62}
+.tpill:not(:disabled):hover{border-color:currentColor}
+/* A side nobody chose is still a real side -- it is just one the match dealt
+   out, and saying so is the difference between "this is where I am" and "this
+   is where I asked to be". */
+.tpill.auto{border-style:dashed}
+.tsplit{display:flex;align-items:center;justify-content:center;gap:10px;
+  margin:-8px 0 14px;font:700 9.5px var(--fb);letter-spacing:.18em;
+  text-transform:uppercase;color:var(--dim2)}
+.tsplit b{font:400 17px var(--fh);letter-spacing:.02em}
+.tsplit b.a{color:var(--accent)}
+.tsplit b.b{color:var(--mat)}
+.tsplit.bad{color:var(--bad)}
+
 /* controls key grid */
 .keys{display:grid;grid-template-columns:auto 1fr;gap:9px 16px;font-size:13px;
   color:var(--dim);align-items:center}
@@ -349,13 +375,18 @@ kbd{display:inline-block;min-width:26px;text-align:center;background:var(--panel
    models already use -- CYAN is you, RED is them. So a cyan row is damage
    you dealt and a red row is damage you took, and the two never have to be
    read to be told apart. */
-#combat{position:absolute;right:30px;top:33%;width:236px;display:flex;
+#combat{position:absolute;right:30px;top:33%;width:236px;display:none;
   flex-direction:column;gap:6px;pointer-events:none}
+/* Only ever on the death screen. During a fight it is noise competing with
+   the hitmarker and the floating damage numbers, which already say what just
+   landed; afterwards it is the one place that says who, with what, and from
+   where. So it accumulates in silence the whole time you are alive and goes
+   up in one piece when you go down. */
+#hud.dead #combat{display:flex}
 .cbt{background:rgba(8,13,20,.86);border:1px solid var(--line);
   border-left:2px solid var(--bad);padding:7px 11px 8px;
   animation:cbtin .18s cubic-bezier(.2,.8,.3,1);transition:opacity .3s linear}
 .cbt.out{border-left-color:var(--accent)}
-.cbt.gone{opacity:0}
 .cbt .cbtop{display:flex;align-items:baseline;justify-content:space-between;gap:10px}
 .cbt b{font-size:12.5px;font-weight:600;letter-spacing:.02em;color:var(--txt);
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -681,6 +712,7 @@ kbd{display:inline-block;min-width:26px;text-align:center;background:var(--panel
     <div class="title sm">LOBBY</div>
     <div class="sub" id="lobbysub">Waiting for the host to start…</div>
     <div class="plist" id="plist"></div>
+    <div class="tsplit hidden" id="tsplit"></div>
     <div class="field">
       <label>Game mode</label>
       <div class="modes">
@@ -3800,7 +3832,8 @@ function ensurePlayer(p) {
       rpos: p.pos ? p.pos.slice() : [0, 0, 0], ryaw: p.yaw || 0, rpitch: 0,
       alive: !!p.alive, crouch: false, hp: p.hp, shield: p.shield,
       kills: p.kills || 0, deaths: p.deaths || 0, spectator: !!p.spectator,
-      team: p.team || 0, offline: !!p.offline,
+      team: p.team || 0, pick: p.pick == null ? null : p.pick,
+      offline: !!p.offline,
       anim: 0, dieT: 0,
     };
     state.players.set(p.id, rp);
@@ -3811,6 +3844,7 @@ function ensurePlayer(p) {
     if (p.deaths !== undefined) rp.deaths = p.deaths;
     if (p.spectator !== undefined) rp.spectator = !!p.spectator;
     if (p.team !== undefined && rp.team !== p.team) { rp.team = p.team; reskinBody(rp); }
+    if (p.pick !== undefined) rp.pick = p.pick;
     if (p.offline !== undefined) rp.offline = !!p.offline;
   }
   return rp;
@@ -3926,7 +3960,7 @@ const killcam = { active: false, t: 0, to: 0, by: null };
 const tape = { frames: [], from: 0, to: 0, by: null };
 function cutTape(byId) {
   tape.frames = []; tape.by = null; tape.from = 0; tape.to = 0;
-  if (!Net.buffer.length) return;
+  if (byId == null || !Net.buffer.length) return;
   const to = Net.buffer[Net.buffer.length - 1].ts;
   const from = to - KILLCAM_MS;
   for (const f of Net.buffer) if (f.ts >= from) tape.frames.push(f);
@@ -3935,8 +3969,13 @@ function cutTape(byId) {
   tape.to = to;
   tape.by = byId;
 }
+/* Deliberately NOT "the subject is someone else". In a duel the survivor
+   watches the same replay the loser does, and the shoulder it is filmed over
+   is their own -- so a camera parented to you is perfectly valid. What is not
+   valid is a replay of nobody, and that is what cutTape refuses: a self-kill
+   hands it a null subject and there is no tape at all. */
 function replayAvailable() {
-  return !!settings.killcam && tape.by != null && tape.by !== state.myId &&
+  return !!settings.killcam && tape.by != null &&
          state.players.has(tape.by) && tape.frames.length > 8 &&
          tape.to - tape.from > 500;      // not enough tape to be worth it
 }
@@ -3957,7 +3996,10 @@ function stopKillcam() {
   $('hud').classList.remove('replay');
   // hand the world back to the live clock rather than leaving it mid-replay
   if (Net.buffer.length) netTime = Net.buffer[Net.buffer.length - 1].ts - INTERP_MS;
-  drawDeathPanel();
+  // A watcher has no death spot waiting underneath the replay, so the end of
+  // the tape is the end of the whole thing.
+  if (deathcam.active && !deathcam.spot) endDeath();
+  else drawDeathPanel();
 }
 
 /* Over the shoulder -- and high enough to actually see over it.
@@ -4031,9 +4073,32 @@ function updateKillcam(dt) {
    there -- deliberately NOT a free cam, because the whole point of the spot
    is that it is the spot: you watch the fight you just lost carry on over
    your own body, from the angle that lost it. */
-const deathcam = { active: false, pos: null, by: null, byName: '', until: 0, total: 0 };
+const deathcam = { active: false, spot: true, pos: null, by: null, byName: '',
+                  until: 0, total: 0 };
+/* Watching a kill you are not the victim of. In a 1v1 the round is over the
+   moment either player goes down, so there is nothing for the winner to do
+   with the next few seconds either -- they watch the same replay, from the
+   same shoulder, which happens to be their own. There is no death spot to
+   fall through to afterwards, because they are not dead: the replay ends and
+   the live camera takes back over. */
+function startWatch(byId, byName) {
+  deathcam.active = true;
+  deathcam.spot = false;
+  state.ads = false;
+  firing = false;
+  deathcam.pos = null;
+  deathcam.by = byId;
+  deathcam.byName = byName || 'the void';
+  deathcam.total = 0;
+  deathcam.until = 0;
+  dcHint = '';
+  cutTape(byId);
+  if (!startKillcam()) { deathcam.active = false; return false; }
+  return true;
+}
 function startDeath(byId, byName, respawnIn) {
   deathcam.active = true;
+  deathcam.spot = true;
   deathcam.pos = me.pos.slice();
   deathcam.by = byId;
   deathcam.byName = byName || 'the void';
@@ -4044,7 +4109,9 @@ function startDeath(byId, byName, respawnIn) {
   // ADS in particular makes the look sensitivity crawl for no visible reason
   state.ads = false;
   firing = false;
-  cutTape(byId);
+  // Falling into the void or standing on your own grenade credits the kill to
+  // you, and there is no over-the-shoulder view of yourself killing yourself.
+  cutTape(byId === state.myId ? null : byId);
   $('hud').classList.add('dead');
   const started = startKillcam();
   if (!started) drawDeathPanel();
@@ -4055,11 +4122,15 @@ function endDeath() {
   deathcam.active = false;       // before stopKillcam, so its repaint no-ops
   stopKillcam();
   deathcam.pos = null;
+  const wasDead = deathcam.spot;
+  deathcam.spot = true;
   $('hud').classList.remove('dead');
   $('deathcam').classList.add('hidden');
-  /* The report froze while you were dead so it could be read; you are alive
-     now and the next fight is a different one. */
-  clearCombat();
+  /* The report is a record of one life. It is held through the death screen
+     so it can be read there, and only cleared on the way out of it -- and only
+     for the player whose life it was, never for someone who merely watched
+     the replay. */
+  if (wasDead) clearCombat();
 }
 function updateDeathcam(dt) {
   deathFov(dt);
@@ -4091,6 +4162,7 @@ function deathBar(frac) {
 let dcHint = '';
 function deathHint() {
   if (killcam.active) return 'Click to skip';
+  if (!deathcam.spot) return '';
   const rep = replayAvailable() ? ' · Click to replay' : '';
   if (deathcam.total) {
     const left = Math.max(0, deathcam.until - performance.now());
@@ -4109,7 +4181,9 @@ function drawDeathPanel() {
   if (!deathcam.active) { el.classList.add('hidden'); return; }
   el.classList.remove('hidden');
   el.classList.toggle('waiting', !killcam.active);
-  el.querySelector('u').textContent = killcam.active ? 'Instant replay' : 'Eliminated by';
+  el.querySelector('u').textContent = !deathcam.spot ? 'Round replay'
+                                    : killcam.active ? 'Instant replay'
+                                    : 'Eliminated by';
   el.querySelector('b').textContent = deathcam.byName;
   if (!killcam.active) deathBar(0);
   dcHint = '';
@@ -4126,13 +4200,15 @@ function drawDeathPanel() {
    is damage you dealt, a red row is damage you took, and the pair never has
    to be read to be told apart.
 
-   One row per player per exchange, not one per bullet. A rifle burst is a
+   One row per player per ENGAGEMENT, not one per bullet. A rifle burst is a
    single event to whoever is on either end of it, and three rows saying 22
-   tell you less than one row saying 66 x3, so a row still on screen absorbs
-   the next hit from the same player and resets its own clock. The number
-   grows while the fight is happening and settles when it stops.
+   tell you less than one row saying 66 x3, so a live row absorbs the next hit
+   from the same player and resets its own clock. What bounds an engagement is
+   a lull: ten seconds of nobody hitting anybody ends it, and the next shot
+   opens a fresh row. That keeps the death screen showing the fight that
+   killed you rather than everyone you have met since you last spawned.
    ========================================================================= */
-const COMBAT_HOLD = 4500, COMBAT_MERGE = 3200, COMBAT_MAX = 4;
+const COMBAT_HOLD = 10000, COMBAT_MAX = 5;
 const combatRows = [];                        // oldest first
 /* "Assault Rifle" is a menu label. A feed row is read in the half second
    between being shot and shooting back, and has a health bar to fit. */
@@ -4148,7 +4224,7 @@ function combatEntry(kind, id, name, dmg, head, weapon, hpFrac, dist, killed) {
   const now = performance.now();
   let row = null;
   for (const r of combatRows) {
-    if (r.kind === kind && r.id === id && now - r.at < COMBAT_MERGE) row = r;
+    if (r.kind === kind && r.id === id && now - r.at < COMBAT_HOLD) row = r;
   }
   if (!row) {
     const el = document.createElement('div');
@@ -4174,7 +4250,6 @@ function combatEntry(kind, id, name, dmg, head, weapon, hpFrac, dist, killed) {
 }
 function paintCombatRow(row) {
   const el = row.el;
-  el.classList.remove('gone');
   el.classList.toggle('kill', row.killed);
   el.querySelector('b').textContent = row.name;
   // A minus sign is health leaving you. Damage you dealt is not YOUR loss, so
@@ -4199,15 +4274,15 @@ function paintCombatRow(row) {
   fill.style.background = f > 0.6 ? 'var(--hp)' : f > 0.3 ? 'var(--mat)' : 'var(--bad)';
 }
 function sweepCombat(now) {
-  /* Frozen while you are dead. The report of the fight that killed you is the
-     one you most want to read, and it must not time out underneath the death
-     screen that exists to show it. */
+  /* Frozen while the death screen is up. The report of the fight that just
+     killed you is the one you most want to read, and it must not age out from
+     underneath the screen that exists to show it. */
   if (deathcam.active) return;
   for (let i = combatRows.length - 1; i >= 0; i--) {
-    const r = combatRows[i];
-    const age = now - r.at;
-    if (age > COMBAT_HOLD + 400) { dropCombatRow(r); combatRows.splice(i, 1); }
-    else if (age > COMBAT_HOLD) r.el.classList.add('gone');
+    if (now - combatRows[i].at > COMBAT_HOLD) {
+      dropCombatRow(combatRows[i]);
+      combatRows.splice(i, 1);
+    }
   }
 }
 function updateRemoteVisuals(dt) {
@@ -4266,8 +4341,13 @@ function updateRemoteVisuals(dt) {
     if (isMe) continue;
     /* The health bar draws with depth testing off, so it goes over everything
        in front of it -- and the player the replay is filming is the one whose
-       bar is nearest the lens. Their health is not what you are watching. */
-    rp.bar.visible = !(killcam.active && id === killcam.by);
+       bar is nearest the lens. Their health is not what you are watching.
+
+       The identity test is not redundant with the `continue` above it: during
+       a replay you are drawn down the REMOTE path like everyone else, so this
+       line runs for your own record too, and without it your bar would be
+       switched on here and never switched off again. */
+    rp.bar.visible = id !== state.myId && !(killcam.active && id === killcam.by);
     const frac = clamp((rp.hp || 0) / CFG.HP_MAX, 0, 1);
     rp.bar.userData.fg.scale.x = 1.46 * frac;
     rp.bar.userData.fg.material.color.setHex(
@@ -4999,8 +5079,13 @@ function handleMsg(m) {
         if (!startDeath(m.by, m.kn, m.rt || 0)) {
           roundMessage('ELIMINATED', 'by ' + m.kn, 2600);
         }
-      } else if (m.by === state.myId) {
-        roundMessage('ELIMINATED ' + m.vn.toUpperCase(), '', 1400);
+      } else {
+        if (m.by === state.myId) roundMessage('ELIMINATED ' + m.vn.toUpperCase(), '', 1400);
+        /* In a duel one death IS the round, so there is nothing else for the
+           survivor to be doing with the next few seconds. Everywhere else the
+           fight carries on around them and taking their camera away would get
+           them killed, so only the person who died watches. */
+        if (state.mode === 'duel') startWatch(m.by, m.kn);
       }
       drawTopbar();
       break;
@@ -5037,8 +5122,19 @@ function handleMsg(m) {
       state.roundNo = m.n;
       state.phase = 'countdown';
       if (m.teams) state.teamScore = m.teams.slice();
-      endDeath();
-      showIntermission(m);
+      /* The round message arrives in the same tick as the kill that caused
+         it, which is why this used to be the bug that stopped replays working
+         at all: it tore the death screen down the frame it was built. The
+         card is what waits now. The server has already added the replay's
+         length to the countdown, so holding the card back costs it nothing --
+         `until` is the card's own time, not the countdown's. */
+      if (m.replay > 0 && deathcam.active) {
+        clearTimeout(roundCardT);
+        roundCardT = setTimeout(() => showIntermission(m), m.replay * 1000);
+      } else {
+        endDeath();
+        showIntermission(m);
+      }
       drawTopbar();
       break;
     case 'phase':
@@ -5100,6 +5196,21 @@ function handleMsg(m) {
       break;
     case 'err':
       $('lobbyerr').textContent = m.m;
+      break;
+    case 'team': {
+      const rp = state.players.get(m.id);
+      if (rp && rp.team !== m.team) { rp.team = m.team; reskinBody(rp); }
+      if (rp) rp.pick = m.team;
+      // Your own side changing re-colours everyone, not just you: blue is
+      // "on my side" rather than "is me", so the whole field flips.
+      if (m.id === state.myId) reskinAllBodies();
+      if (!state.running) refreshLobby();     // i.e. the lobby is on screen
+      break;
+    }
+    /* A line the server wants a player to read during a match -- not an error
+       and not a kill, so it lands in the killfeed where match news goes. */
+    case 'note':
+      killfeedNote(m.m);
       break;
     /* The server declined the connection -- joining too fast, or a full world.
        Say so on the menu the player is still looking at. The "NO CONNECTION"
@@ -5183,9 +5294,12 @@ function enterLobby() {
 function refreshLobby() {
   const list = $('plist');
   list.innerHTML = '';
+  const isHost = state.myId === state.hostId;
+  const teamMode = chosenMode === 'team';
+  const count = [0, 0];
   for (const p of state.players.values()) {
     const d = document.createElement('div');
-    d.className = 'pitem';
+    d.className = 'pitem' + (p.id === state.myId ? ' me' : '');
     const dot = document.createElement('span');
     dot.className = 'dot' + (p.bot ? ' bot' : '');
     const n = document.createElement('span');
@@ -5198,9 +5312,40 @@ function refreshLobby() {
       const t = document.createElement('span'); t.className = 'tag'; t.textContent = 'bot';
       d.appendChild(t);
     }
+    if (teamMode) {
+      /* Your own side is yours to change. Everyone else's is the host's --
+         bots especially, since a bot has nobody else to ask. */
+      const side = p.team || 0;
+      count[side]++;
+      const pill = document.createElement('button');
+      pill.className = 'tpill t' + side + (p.pick == null ? ' auto' : '');
+      pill.textContent = 'Team ' + (side + 1);
+      const mine = p.id === state.myId;
+      if (mine || isHost) {
+        pill.title = mine ? 'Switch sides' : 'Move ' + p.name;
+        pill.onclick = () => Net.send({ t: 'setteam', id: p.id, team: 1 - side });
+      } else {
+        pill.disabled = true;
+        pill.title = 'Only ' + p.name + ' or the host can move them';
+      }
+      d.appendChild(pill);
+    }
     list.appendChild(d);
   }
-  const isHost = state.myId === state.hostId;
+  const split = $('tsplit');
+  split.classList.toggle('hidden', !teamMode);
+  if (teamMode) {
+    // An empty side is not a match -- the win check reads it as a wipe -- so
+    // it is worth saying before the start button rather than after it.
+    const empty = !count[0] || !count[1];
+    split.classList.toggle('bad', empty);
+    split.innerHTML = '';
+    const a = document.createElement('b'); a.className = 'a'; a.textContent = count[0];
+    const v = document.createElement('span');
+    v.textContent = empty ? 'one side is empty' : 'a side';
+    const b = document.createElement('b'); b.className = 'b'; b.textContent = count[1];
+    split.appendChild(a); split.appendChild(v); split.appendChild(b);
+  }
   $('btnstart').disabled = !isHost;
   $('btnbot').disabled = !isHost;
   $('btnkick').disabled = !isHost;
@@ -5248,7 +5393,10 @@ function enterMatch(resuming) {
    so a first-to-5 reads as five rounds rather than one fight that keeps
    restarting. Times itself out with the server's own countdown. */
 let intermissionT = null;
+let roundCardT = null;
 function showIntermission(m) {
+  clearTimeout(roundCardT);
+  endDeath();                 // the card owns the screen from here
   const el = $('intermission');
   const teamRound = m.team != null;
   const winner = m.by != null ? state.players.get(m.by) : null;
@@ -5281,6 +5429,7 @@ function showIntermission(m) {
 }
 function hideIntermission() {
   clearTimeout(intermissionT);
+  clearTimeout(roundCardT);
   $('intermission').classList.add('hidden');
 }
 function showEnd(m) {
@@ -5831,8 +5980,11 @@ function frame(now) {
   fpsAcc += dt; fpsN++;
   if (fpsAcc > 0.5) { state.fps = fpsN / fpsAcc; fpsAcc = 0; fpsN = 0; drawStat(); }
 
+  /* A living watcher still has hands on the keyboard while the replay owns
+     the camera, and running the controller would walk them somewhere they
+     cannot see. */
   if (state.running && !state.paused && !state.dead && !state.spectator &&
-      state.phase !== 'ended') {
+      !deathcam.active && state.phase !== 'ended') {
     updateLocal(dt);
   }
 
@@ -5842,10 +5994,10 @@ function frame(now) {
        both would fight for the camera every frame. The replay owns the clock
        as well, which is why the spot cam is the one that still samples live:
        it is watching the match go on without you. */
-    if (deathcam.active && (!state.dead || state.spectator)) endDeath();
+    if (deathcam.active && deathcam.spot && (!state.dead || state.spectator)) endDeath();
     if (killcam.active) {
       updateKillcam(dt);
-    } else if (deathcam.active) {
+    } else if (deathcam.active && deathcam.spot) {
       updateDeathcam(dt);
       sampleRemote(dt);
     } else if (state.spectator) {
