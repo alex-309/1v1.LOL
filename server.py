@@ -38,7 +38,7 @@ WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 # same stamp and shouts if the two disagree -- editing index.html and forgetting
 # to restart server.py leaves the old rules in charge, and the symptom (pieces
 # floating that the ghost said were illegal) looks exactly like a code bug.
-BUILD_ID = "BUILD 2026-09-16 replays-and-teams"
+BUILD_ID = "BUILD 2026-09-17 welcome-recovery"
 TICK_HZ = 30.0
 TICK_DT = 1.0 / TICK_HZ
 
@@ -118,6 +118,17 @@ CONFIG = {
     "STEP_UP": 0.6,
     "ACCEL": 60.0,
     "FRICTION": 12.0,
+    # Fall damage. Height is the resource this whole game is built on, and it
+    # used to cost nothing to give back: you could tower thirty storeys, step
+    # off the top and walk away with full health. Measured as a DROP rather
+    # than an impact speed, because a drop survives the jitter of position
+    # updates arriving over a network and a sampled velocity does not.
+    #
+    # A cell is 4m, and a jump clears 1.5m (JUMP^2 / 2*GRAVITY), so one storey
+    # down is deliberately free -- riding your own ramps must never chip you.
+    # Two storeys hurt, three nearly kill, four kill.
+    "FALL_SAFE_H": 5.5,        # metres of drop that cost nothing
+    "FALL_DMG_PER_M": 11.0,    # damage per metre beyond that
     "SUBSTEP": 1.0 / 120.0,
     "DT_CLAMP": 0.1,         # never advance more than 100ms of physics in a frame
     "KILL_Y": -20.0,
@@ -125,6 +136,18 @@ CONFIG = {
     # --- combat ---
     "HP_MAX": 100.0,
     "SHIELD_MAX": 100.0,
+    # Swapping guns costs a moment. Instant swaps make a three-weapon burst --
+    # shotgun, sniper, rifle, no pause -- strictly better than mastering any
+    # one of them, because each weapon's own fire rate is tracked separately
+    # and chaining sidesteps all three. Deliberately NOT charged to or from a
+    # build piece: build-to-gun is the core loop of the game, not a trick.
+    "SWAP_TIME": 0.35,
+    # Flinch. Being shot throws your view, so shooting first buys tempo and
+    # not just damage -- without it a fight is a pure damage race settled by
+    # whoever had more health when it started. Scaled by what landed and
+    # capped, so a shotgun to the face disturbs you and a graze does not.
+    "FLINCH": 1.6,          # degrees of view kick per 100 damage
+    "FLINCH_MAX": 3.2,      # most one hit may throw you
     "SPAWN_PROTECT": 2.0,
     "RESPAWN_TIME": 3.0,
     "ROUND_COUNTDOWN": 3.0,
@@ -132,6 +155,20 @@ CONFIG = {
     # card goes up. Kept here rather than only in the client so the countdown
     # and the replay cannot drift apart.
     "REPLAY_TIME": 2.6,
+    # The match clock. A first-to-N has no way to end when neither side will
+    # take the risk of pushing -- two turtles in a duel is a genuinely
+    # unbounded game -- and on Vercel the function's own ceiling has been
+    # acting as the timer, cutting the socket mid-fight rather than finishing
+    # the match. Whoever is ahead when it runs out takes it; level is a draw.
+    # 0 means no clock: the sandbox and the trainers are not races.
+    "MATCH_TIME": {
+        "duel": 420.0,
+        "team": 600.0,
+        "dm": 600.0,
+        "build": 0.0,
+        "aim": 0.0,
+        "trainer": 0.0,
+    },
     "DUEL_TARGET": 5,
     "DM_TARGET": 15,
     "TEAM_TARGET": 5,        # rounds to win a 2v2
@@ -174,6 +211,13 @@ CONFIG = {
             "range": 0.0, "rate": 1.2, "mag": 0, "reload": 0.0,
             "pellets": 1, "spread": 0.0, "move_spread": 0.0, "recoil": 0.0,
             "head_mult": 1.0, "ads": False, "melee": False,
+            # Grenades are CARRIED, not magazined. `mag` stays 0 so the
+            # reload path ignores them entirely -- a weapon with a mag and a
+            # 0.0 reload would refill the instant anyone pressed R, which is
+            # the infinite supply this is meant to end. You get `carry` per
+            # life and no more: 80 to a player and 160 to a build every 1.2s
+            # forever was simply the strongest thing in any mode that had it.
+            "carry": 2,
             "fuse": 3.0, "radius": 6.0, "throw_speed": 22.0,
         },
     },
@@ -193,9 +237,12 @@ CONFIG = {
     "GRENADE_BOUNCE": 0.35,
 
     "BOT": {
-        "easy":   {"react": 0.40, "err": 0.075, "turn": 3.0, "build_cd": 2.2, "push": 0.25, "burst": 4},
-        "medium": {"react": 0.22, "err": 0.035, "turn": 5.5, "build_cd": 1.1, "push": 0.55, "burst": 7},
-        "hard":   {"react": 0.11, "err": 0.014, "turn": 9.0, "build_cd": 0.55, "push": 0.85, "burst": 12},
+        # react     = pause between a target appearing and the first round
+        # burst     = rounds sent before the bot lets go of the trigger
+        # burst_gap = how long it stays off the trigger before re-acquiring
+        "easy":   {"react": 0.40, "err": 0.075, "turn": 3.0, "build_cd": 2.2, "push": 0.25, "burst": 4,  "burst_gap": 0.55},
+        "medium": {"react": 0.22, "err": 0.035, "turn": 5.5, "build_cd": 1.1, "push": 0.55, "burst": 7,  "burst_gap": 0.35},
+        "hard":   {"react": 0.11, "err": 0.014, "turn": 9.0, "build_cd": 0.55, "push": 0.85, "burst": 12, "burst_gap": 0.18},
     },
     # A difficulty dial only makes the same bot faster. A personality changes
     # what it is TRYING to do, which is the part you actually practise against:
@@ -212,6 +259,13 @@ CONFIG = {
         "builder":  {"label": "Builder", "push": 0.7, "build": 2.4, "range": 1.1,
                      "ramp": 0.85, "wall_first": 0.4, "retreat": 0.5},
     },
+
+    # How far above its target a bot still thinks height is worth taking.
+    # Height is for getting an ANGLE, and once it has one there is nothing
+    # left to gain -- without this a Builder lays a ramp every 0.4s for the
+    # whole round, and in a mode where builds persist that litter is charged
+    # to every collision test the server runs for the rest of the match.
+    "BOT_HEIGHT_EDGE": 6.0,
 
     "AIM_TRAINER": {"lifetime": 2.6, "gap": 0.35, "count": 3, "radius": 0.55},
     # BUILD TRAINER -- courses of checkpoints you can only reach by building.
@@ -456,12 +510,19 @@ ARENA_BOXES = [box_from_center([b[0], b[1], b[2]], [b[3], b[4], b[5]], "arena", 
                for b in ARENA]
 
 
+# Bumped whenever ARENA_BOXES is rebuilt. Game.static_boxes() caches a flat
+# list built FROM that global, so an arena swap has to invalidate it too --
+# and load_arena is a module function, with no Game to notify.
+ARENA_EPOCH = 0
+
+
 def load_arena(name):
     """Swap the live layout. Rebuilds ARENA_BOXES in place, because every
     collision path in the server holds a reference to that one list."""
-    global ARENA, SPAWNS, ARENA_NAME
+    global ARENA, SPAWNS, ARENA_NAME, ARENA_EPOCH
     if name not in ARENAS or name == ARENA_NAME:
         return False
+    ARENA_EPOCH += 1
     ARENA_NAME = name
     ARENA, SPAWNS = ARENAS[name]
     ARENA_BOXES[:] = [box_from_center([b[0], b[1], b[2]], [b[3], b[4], b[5]],
@@ -690,6 +751,21 @@ def target_for(mode):
     if mode == "team":
         return CONFIG["TEAM_TARGET"]
     return CONFIG["DM_TARGET"]
+
+
+def starting_ammo():
+    """What every weapon holds on a fresh life. `carry` weapons are spent and
+    not reloaded; everything else starts on a full magazine."""
+    out = {}
+    for w in CONFIG["LOADOUT"]:
+        spec = CONFIG["WEAPONS"][w]
+        out[w] = spec.get("carry", spec["mag"])
+    return out
+
+
+def match_time_for(mode):
+    """Seconds a match of `mode` may run. 0 means it runs until somebody wins."""
+    return float(CONFIG["MATCH_TIME"].get(mode, 0.0))
 
 
 def loadout_for(mode):
@@ -1223,6 +1299,13 @@ JOIN_WINDOW = 10.0       # ... within this many seconds
 MAX_PLAYERS = 16         # hard ceiling on a single world, bots included
 LIMITER_IDLE = 300.0     # forget an address after this long
 
+# How long a client has, after being sent its welcome, to say it survived it.
+# See Game.sweep_unready(). Generous on purpose: the welcome carries the whole
+# world and a slow phone on slow wifi has to parse it, build an arena and
+# compile shaders before it can answer, and a lobby slot wrongly taken back
+# from a real player is a worse failure than one held a few seconds too long.
+READY_TIMEOUT = 20.0
+
 
 class JoinRefused(Exception):
     """A connection that may not become a player. Carries the reason shown."""
@@ -1279,6 +1362,11 @@ class Game(object):
         self.clients = {}
         self.pieces = {}
         self.piece_order = []
+        # Bumped by touch_pieces() on every change to self.pieces or to any
+        # piece's boxes. static_boxes() rebuilds only when it moves.
+        self.world_epoch = 0
+        self._boxes = None
+        self._boxes_key = None
         self.grenades = []
         self.targets = []
         self.dummies = []
@@ -1296,6 +1384,7 @@ class Game(object):
         self.aim_stats = {}
         self.aim_next = 0.0
         self.winner = None
+        self.match_until = 0.0        # 0 = no clock; see match_time_for()
 
     # -- helpers ----------------------------------------------------------
     def new_player(self, name, is_bot=False, diff="medium", style="balanced"):
@@ -1309,7 +1398,7 @@ class Game(object):
             "hp": CONFIG["HP_MAX"], "shield": CONFIG["SHIELD_MAX"],
             "mats": CONFIG["MAT_START"], "alive": False, "spectator": False,
             "hand": "ar", "ads": False,
-            "ammo": {w: CONFIG["WEAPONS"][w]["mag"] for w in CONFIG["LOADOUT"]},
+            "ammo": starting_ammo(),
             "last_shot": {}, "reload_until": 0.0, "reloading": None,
             "kills": 0, "deaths": 0,
             # Match stats. Kills and deaths alone say who won but nothing about
@@ -1319,6 +1408,11 @@ class Game(object):
             # scoring it as 22% would be a lie about what happened.
             "st": {"shots": 0, "hits": 0, "dmg": 0.0, "built": 0,
                    "farmed": 0, "best": 0.0},
+            # Highest point reached since leaving the ground, or None while
+            # standing on something. See track_fall().
+            "fall_peak": None,
+            # When the weapon in hand becomes usable. See the "switch" handler.
+            "swap_ready": 0.0,
             "respawn_at": 0.0, "protect_until": 0.0, "last_build": 0.0,
             "last_dmg_from": None, "last_dmg_at": 0.0,
             "hist": [],                 # (server ms, pos, crouch) for rewinds
@@ -1331,10 +1425,16 @@ class Game(object):
             # the match handed out. None means "put me wherever".
             "team_pick": None,
             "tr": None,                 # build-trainer run state
+            # Did the page behind this socket finish handling its welcome?
+            # A bot has no page and is therefore born ready. See
+            # sweep_unready(), which is the only thing that reads these.
+            "ready": bool(is_bot),
+            "welcomed_at": time.time(),
             # bot-only scratch
             "bt": {"state": "IDLE", "target": None, "next_fire": 0.0,
                    "next_build": 0.0, "stuck_t": 0.0, "last_pos": [0, 0, 0],
-                   "wander": [0.0, 0.0, 0.0], "seen_at": 0.0, "burst": 0},
+                   "wander": [0.0, 0.0, 0.0], "seen_at": 0.0, "burst": 0,
+                   "had_los": False, "skirt": 0.0, "last_dist": 1e9},
         }
         self.players[pid] = p
         return p
@@ -1359,10 +1459,35 @@ class Game(object):
             c.send(msg)
 
     # -- world ------------------------------------------------------------
+    def touch_pieces(self):
+        """Call after ANY change to self.pieces, or to a piece's boxes."""
+        self.world_epoch += 1
+
+    def static_boxes(self):
+        """The arena plus every build piece, as one shared list.
+
+        READ ONLY. Callers must not mutate what they get back -- use
+        collision_boxes() for a list you own.
+
+        This is the hottest structure in the server. Every bot asks for the
+        world once a tick to steer and to check its sight line, and rebuilding
+        it walks every piece and extends a list per piece. At a few hundred
+        pieces with a handful of bots that WAS the whole 33ms tick budget, so
+        it is now rebuilt only when the world actually changes.
+        """
+        key = (self.world_epoch, ARENA_EPOCH)
+        if self._boxes_key != key:
+            boxes = list(ARENA_BOXES)
+            for pc in self.pieces.values():
+                boxes.extend(pc["boxes"])
+            self._boxes = boxes
+            self._boxes_key = key
+        return self._boxes
+
     def collision_boxes(self, exclude_pid=None, include_players=False, at_ms=None):
-        boxes = list(ARENA_BOXES)
-        for key, pc in self.pieces.items():
-            boxes.extend(pc["boxes"])
+        """A fresh list the caller is free to extend. Hot read-only paths
+        should take static_boxes() instead and skip the copy."""
+        boxes = list(self.static_boxes())
         if include_players:
             for p in self.players.values():
                 if not p["alive"] or p["id"] == exclude_pid:
@@ -1569,6 +1694,8 @@ class Game(object):
             if k in self.piece_order:
                 self.piece_order.remove(k)
             self.broadcast({"t": "unbuild", "key": k, "orphan": True})
+        if orphans:
+            self.touch_pieces()
         return orphans
 
     def cell_volume_taken(self, cx, cy, cz):
@@ -1767,7 +1894,14 @@ class Game(object):
             old = self.piece_order.pop(0)
             if old in self.pieces:
                 del self.pieces[old]
+                self.touch_pieces()
                 self.broadcast({"t": "unbuild", "key": old})
+                # The oldest piece in the world is very often the bottom of
+                # somebody's tower, and every other removal path runs the
+                # cascade. Without it the cap quietly produced the one thing
+                # the build rules promise cannot exist: pieces resting on
+                # nothing, on the server and on every client.
+                self.prune_unsupported()
 
         pc = {"key": key, "type": ptype, "cx": cx, "cy": cy, "cz": cz,
               "dir": direction, "hp": CONFIG["PIECE_HP"], "owner": p["id"],
@@ -1775,6 +1909,7 @@ class Game(object):
               "sbounds": ([min(b.lo[i] for b in boxes) for i in range(3)],
                           [max(b.hi[i] for b in boxes) for i in range(3)])}
         self.pieces[key] = pc
+        self.touch_pieces()
         self.piece_order.append(key)
         if not infinite:
             p["mats"] -= cost
@@ -1785,6 +1920,7 @@ class Game(object):
         for other, dest in pushes:
             other["pos"] = list(dest)
             other["vel"][1] = 0.0
+            other["fall_peak"] = None   # being shoved by a piece is not a drop
             other["grounded"] = False
             self.send_to(other["id"], {"t": "correct", "pos": other["pos"]})
         return pc
@@ -1801,6 +1937,7 @@ class Game(object):
         pc["hp"] -= amount
         if pc["hp"] <= 0:
             del self.pieces[key]
+            self.touch_pieces()
             if key in self.piece_order:
                 self.piece_order.remove(key)
             self.broadcast({"t": "unbuild", "key": key})
@@ -1830,6 +1967,7 @@ class Game(object):
         pc["mask"] = mask
         boxes = tile_boxes(pc["type"], pc["cx"], pc["cy"], pc["cz"], pc["dir"], mask)
         pc["boxes"] = boxes
+        self.touch_pieces()       # an edit changes geometry without changing the key
         self.broadcast({"t": "editbuild", "key": key, "mask": mask})
         # A ramp edit raises geometry rather than removing it, so an edit can
         # put a player inside the piece exactly the way a fresh placement can.
@@ -1846,10 +1984,37 @@ class Game(object):
                 continue
             other["pos"] = list(dest)
             other["vel"][1] = 0.0
+            other["fall_peak"] = None   # being shoved by a piece is not a drop
             self.send_to(other["id"], {"t": "correct", "pos": other["pos"]})
 
+    def track_fall(self, p):
+        """Charge for a landing, from positions the server has actually seen.
+
+        Called wherever a player's position and grounded flag are updated --
+        the bot tick, or a client input message -- so bots and humans are
+        charged by one rule rather than two that can drift.
+
+        The grounded flag itself is the client's word, the same way its
+        position is: this is the server validating the obvious, not hardened
+        anti-cheat, and the existing plausibility clamp sets that level.
+        """
+        y = p["pos"][1]
+        if not p["grounded"]:
+            if p["fall_peak"] is None or y > p["fall_peak"]:
+                p["fall_peak"] = y
+            return
+        peak, p["fall_peak"] = p["fall_peak"], None
+        if peak is None or not p["alive"]:
+            return
+        drop = peak - y
+        if drop <= CONFIG["FALL_SAFE_H"]:
+            return
+        self.apply_damage(p, (drop - CONFIG["FALL_SAFE_H"]) * CONFIG["FALL_DMG_PER_M"],
+                          p["id"], weapon="fall", bypass_shield=True)
+
     # -- combat -----------------------------------------------------------
-    def apply_damage(self, target, amount, by_pid, head=False, weapon=None):
+    def apply_damage(self, target, amount, by_pid, head=False, weapon=None,
+                     bypass_shield=False):
         if not target["alive"]:
             return
         if time.time() < target["protect_until"]:
@@ -1866,17 +2031,22 @@ class Game(object):
         # Credit the damage that actually lands, not what was rolled: overkill
         # on a player with 3hp left is 3 damage, and counting the full swing
         # would make the readout flattering rather than true.
-        dealt = min(amount, target["shield"] + max(0.0, target["hp"]))
+        # Shields stop bullets, not the ground. A fall goes straight to health,
+        # which is what makes height a real risk rather than a shield tax.
+        pool = max(0.0, target["hp"]) if bypass_shield \
+            else target["shield"] + max(0.0, target["hp"])
+        dealt = min(amount, pool)
         killer = self.players.get(by_pid)
         if killer and killer is not target:
             killer["st"]["dmg"] += dealt
             if dealt > killer["st"]["best"]:
                 killer["st"]["best"] = dealt
-        shield = target["shield"]
-        if shield > 0:
-            used = min(shield, amount)
-            target["shield"] = shield - used
-            amount -= used
+        if not bypass_shield:
+            shield = target["shield"]
+            if shield > 0:
+                used = min(shield, amount)
+                target["shield"] = shield - used
+                amount -= used
         if amount > 0:
             target["hp"] -= amount
         target["last_dmg_from"] = by_pid
@@ -1904,9 +2074,9 @@ class Game(object):
                                   "sh": round(target["shield"]),
                                   "dead": target["hp"] <= 0})
         if target["hp"] <= 0:
-            self.kill_player(target, by_pid)
+            self.kill_player(target, by_pid, cause=weapon)
 
-    def kill_player(self, target, by_pid):
+    def kill_player(self, target, by_pid, cause=None):
         target["alive"] = False
         target["hp"] = 0.0
         target["deaths"] += 1
@@ -1920,9 +2090,11 @@ class Game(object):
         # a timer, and say so with 0.
         rt = (0.0 if (self.mode == "duel" or is_team(self.mode))
               else CONFIG["RESPAWN_TIME"])
+        # `cause` only matters when there is nobody to name: a fall reads
+        # "Alice fell", not "Alice eliminated Alice".
         self.broadcast({"t": "die", "id": target["id"], "by": by_pid,
                         "kn": killer["name"] if killer else "the void",
-                        "vn": target["name"], "rt": rt})
+                        "vn": target["name"], "rt": rt, "cause": cause})
         self.broadcast({"t": "score", "s": {str(p["id"]): p["kills"]
                                             for p in self.players.values()}})
         if self.mode == "duel":
@@ -1992,6 +2164,46 @@ class Game(object):
         if not alive[0] and not alive[1]:
             return None                     # a mutual wipe scores for nobody
         return 0 if not alive[0] else 1
+
+    def clock_left(self):
+        """Seconds remaining, or None when this mode has no clock. Sent rather
+        than the deadline itself because the client's clock is its own -- it
+        already carries a server time offset for interpolation, and a countdown
+        is the one thing that does not need to agree to the millisecond."""
+        if not self.match_until:
+            return None
+        return max(0.0, round(self.match_until - time.time(), 1))
+
+    def time_up(self):
+        """The clock beat the scoreline."""
+        if self.phase == "ended":
+            return
+        self.match_until = 0.0
+        self.phase = "ended"
+        stats = [self.wire_stats(q) for q in self.players.values()]
+        if is_team(self.mode):
+            a, b = self.team_score
+            side = 0 if a > b else (1 if b > a else None)
+            self.winner = side
+            names = [q["name"] for q in self.participants() if q["team"] == side]
+            self.broadcast({"t": "matchend", "winner": None, "team": side,
+                            "teams": self.team_score, "draw": side is None,
+                            "timeup": True,
+                            "name": (" & ".join(names) or ("Team " + str(side + 1)))
+                                    if side is not None else "Draw",
+                            "s": stats})
+            return
+        parts = [p for p in self.participants()]
+        best = max((p["kills"] for p in parts), default=0)
+        leaders = [p for p in parts if p["kills"] == best]
+        # A shared lead is a draw, not a coin toss decided by dict order.
+        lead = leaders[0] if len(leaders) == 1 else None
+        self.winner = lead["id"] if lead else None
+        self.broadcast({"t": "matchend",
+                        "winner": lead["id"] if lead else None,
+                        "draw": lead is None, "timeup": True,
+                        "name": lead["name"] if lead else "Draw",
+                        "s": stats})
 
     def check_win(self):
         if self.phase == "ended":
@@ -2068,6 +2280,7 @@ class Game(object):
             s = best
         p["pos"] = [s[0], s[1], s[2]]
         p["vel"] = [0.0, 0.0, 0.0]
+        p["fall_peak"] = None           # a spawn is not a landing
         p["yaw"] = s[3]
         p["pitch"] = 0.0
         p["hp"] = CONFIG["HP_MAX"]
@@ -2075,9 +2288,10 @@ class Game(object):
         p["alive"] = True
         p["crouch"] = False
         p["mats"] = CONFIG["MAT_START"]
-        p["ammo"] = {w: CONFIG["WEAPONS"][w]["mag"] for w in CONFIG["LOADOUT"]}
+        p["ammo"] = starting_ammo()
         p["reloading"] = None
         p["reload_until"] = 0.0
+        p["swap_ready"] = 0.0       # you spawn with it already in hand
         # A mode can take a weapon away between rounds -- holding a grenade
         # when a duel starts would leave you holding something you cannot use
         # and no longer have a hotbar key for.
@@ -2091,6 +2305,7 @@ class Game(object):
 
     def wipe_builds(self):
         self.pieces.clear()
+        self.touch_pieces()
         self.piece_order = []
         self.broadcast({"t": "wipe"})
 
@@ -2196,13 +2411,19 @@ class Game(object):
                 p["alive"] = False
         self.phase = "countdown"
         self.phase_until = time.time() + CONFIG["ROUND_COUNTDOWN"]
+        # The opening countdown is not playing time, so the clock covers it and
+        # the match still gets the full limit once it goes live.
+        limit = match_time_for(mode)
+        self.match_until = (self.phase_until + limit) if limit else 0.0
         self.broadcast({"t": "mode", "mode": mode, "phase": self.phase,
                         "until": CONFIG["ROUND_COUNTDOWN"],
+                        "clock": self.clock_left(),
                         "players": [self.public_player(p) for p in self.players.values()]})
 
     def to_lobby(self):
         self.mode = "lobby"
         self.phase = "lobby"
+        self.match_until = 0.0
         if load_arena("open"):
             self.send_arena()
         self.winner = None
@@ -2306,6 +2527,11 @@ class Game(object):
             self.host = pid
         if not rejoined:
             self.seat_team(p)      # a rejoin keeps the side it left on
+        # Unready again from here, rejoin included: the client coming back has
+        # to survive this welcome the same as a fresh one, and the slot it is
+        # walking into is exactly what a broken page would otherwise squat on.
+        p["ready"] = p["bot"]
+        p["welcomed_at"] = time.time()
         client.send(self.welcome(p, rejoined))
         if rejoined:
             self.broadcast({"t": "rejoin", "p": self.public_player(p)}, exclude=pid)
@@ -2324,6 +2550,7 @@ class Game(object):
             "config": CONFIG, "arena": ARENA, "spawns": SPAWNS,
             "maps": ARENA_NAMES, "map": self.map_choice,
             "mode": self.mode, "phase": self.phase,
+            "clock": self.clock_left(),
             "you": self.private_player(p),
             "players": [self.public_player(q) for q in self.players.values()],
             "pieces": [self.wire_piece(pc) for pc in self.pieces.values()],
@@ -2344,6 +2571,45 @@ class Game(object):
                 nm = p["name"]
                 self.remove_player(pid)
                 print("  - %s left (did not come back)" % nm)
+
+    def sweep_unready(self, now):
+        """Drop anyone who was sent a welcome and never came back ready.
+
+        A socket being open says nothing about the page behind it: browsers
+        answer protocol-level pings from inside the network stack with no
+        JavaScript running, so a client that threw while handling its welcome
+        stayed "connected" indefinitely. It had already been broadcast as a
+        join, so everyone else saw a player who was in the lobby, counted
+        toward the roster, and could never move -- and a duel, which needs
+        exactly two, could not be started around them.
+
+        Deliberately not a heartbeat. requestAnimationFrame stops dead on a
+        backgrounded tab, so ongoing silence means "alt-tabbed" at least as
+        often as it means "broken" and nothing may be reaped on it. This asks
+        a narrower question with only one right answer: did the handshake
+        ever finish? Bots have no client and never answer, and an offline
+        player is sweep_offline's business, not this one's.
+        """
+        for pid, p in list(self.players.items()):
+            if p["ready"] or p["bot"] or p["offline_since"]:
+                continue
+            if pid not in self.clients:
+                continue
+            if now - p["welcomed_at"] <= READY_TIMEOUT:
+                continue
+            nm = p["name"]
+            # Not detach(): that routes through go_offline(), which PARKS the
+            # slot for REJOIN_GRACE so a dropped player can walk back into it.
+            # There is nothing to walk back into here -- the page never got as
+            # far as playing -- and parking it would hold the roster open for
+            # another 45 seconds, which is the symptom being fixed.
+            c = self.clients.pop(pid, None)
+            self.remove_player(pid)
+            if c:
+                c.kill()
+            print("  - %s never finished joining (no ready in %ds) -- dropped. "
+                  "Their browser most likely failed to start the 3D view; a "
+                  "client error above will say why." % (nm, int(READY_TIMEOUT)))
 
     def private_player(self, p):
         """The parts of your own record only you see. Sent on welcome so a
@@ -2384,6 +2650,16 @@ class Game(object):
         if w is None or weapon == "grenade" or not self.can_use(weapon):
             return
         now = time.time()
+        if weapon != p["hand"]:
+            # A shot with a weapon the server never saw you draw is a switch it
+            # was not told about. Charge it as one and drop this shot, or a
+            # client could skip the delay simply by not announcing the change.
+            if weapon in CONFIG["LOADOUT"] and p["hand"] in CONFIG["LOADOUT"]:
+                p["swap_ready"] = now + CONFIG["SWAP_TIME"]
+            p["hand"] = weapon
+            return
+        if now < p["swap_ready"]:
+            return
         if now - p["last_shot"].get(weapon, 0.0) < w["rate"] * 0.85:
             return
         if w["mag"] > 0:
@@ -2543,6 +2819,12 @@ class Game(object):
         now = time.time()
         if now - p["last_shot"].get("grenade", 0.0) < w["rate"]:
             return
+        if p["ammo"].get("grenade", 0) <= 0:
+            return
+        if time.time() < p["swap_ready"]:
+            return
+        p["ammo"]["grenade"] -= 1
+        self.send_to(p["id"], {"t": "you", "ammo": p["ammo"]})
         p["last_shot"]["grenade"] = now
         gid = self.next_gid
         self.next_gid += 1
@@ -2558,6 +2840,11 @@ class Game(object):
         w = CONFIG["WEAPONS"]["grenade"]
         r = w["radius"]
         self.broadcast({"t": "boom", "pos": g["pos"], "r": r})
+        # One world for the whole blast. This used to be rebuilt inside the
+        # loop, so a grenade landing among four players walked every piece in
+        # the map four times. Nothing in the loop changes the pieces -- the
+        # build damage is applied afterwards.
+        boxes = self.static_boxes()
         for p in self.players.values():
             if not p["alive"]:
                 continue
@@ -2567,7 +2854,6 @@ class Game(object):
                 continue
             # line of sight, so a grenade doesn't damage through a floor
             dirv = v_norm(v_sub(c, g["pos"]))
-            boxes = self.collision_boxes()
             t, _ = raycast(g["pos"], dirv, boxes, max(d - 0.4, 0.01))
             if t is not None:
                 continue
@@ -2680,7 +2966,7 @@ class Game(object):
         bt = p["bt"]
         if not p["alive"]:
             return
-        boxes = self.collision_boxes(exclude_pid=p["id"])
+        boxes = self.static_boxes()
 
         # Teammates are not targets. Friendly fire is already refused in
         # apply_damage, so a bot chasing its own partner did no damage -- it
@@ -2704,7 +2990,16 @@ class Game(object):
             t, box = raycast(eye, dirv, boxes, dist - 0.3)
             see = t is None
             if see:
-                bt["seen_at"] = now
+                # Reaction time is measured from the moment a target APPEARS,
+                # so the stamp only moves on the not-seeing -> seeing edge.
+                # Re-stamping it every frame the bot could see you made the
+                # gate below compare a number against itself, and every
+                # difficulty snap-fired the instant you stepped into view.
+                if not bt["had_los"]:
+                    bt["seen_at"] = now
+                    bt["burst"] = 0
+                bt["had_los"] = True
+                bt["skirt"] = 0.0        # re-pick a side next time sight goes
                 # aim with a capped turn rate so it swings on rather than snapping
                 want_yaw = math.degrees(math.atan2(-dirv[0], -dirv[2]))
                 want_pitch = math.degrees(math.asin(max(-1.0, min(1.0, dirv[1]))))
@@ -2713,19 +3008,68 @@ class Game(object):
                 p["yaw"] += max(-maxturn, min(maxturn, dy))
                 p["pitch"] += max(-maxturn, min(maxturn, want_pitch - p["pitch"]))
 
-                if now >= bt["next_fire"] and now - bt["seen_at"] >= 0.0:
-                    bt["next_fire"] = now + max(0.09, cfg["react"] * 0.5)
-                    err = cfg["err"]
-                    shot = v_norm([dirv[0] + random.uniform(-err, err),
-                                   dirv[1] + random.uniform(-err, err),
-                                   dirv[2] + random.uniform(-err, err)])
-                    weapon = "ar" if dist > 12 else "shotgun"
-                    if dist > 45:
-                        weapon = "sniper"
-                    p["hand"] = weapon
-                    if p["ammo"].get(weapon, 0) <= 0:
-                        p["ammo"][weapon] = CONFIG["WEAPONS"][weapon]["mag"]
-                    self.do_shoot(p, weapon, eye, shot, random.getrandbits(32))
+                if now >= bt["next_fire"] and now - bt["seen_at"] >= cfg["react"]:
+                    # Range bands, with hysteresis at every boundary. A swap
+                    # costs time now, so a bot hovering on a threshold must not
+                    # pay it every tick -- it keeps what it is holding until
+                    # the range is clearly inside another band. Without this a
+                    # bot at twelve metres swaps rifle/shotgun forever and
+                    # never finishes bringing either one up.
+                    if p["hand"] == "shotgun":
+                        weapon = ("shotgun" if dist < 13.0
+                                  else "sniper" if dist > 50.0 else "ar")
+                    elif p["hand"] == "sniper":
+                        weapon = ("sniper" if dist > 40.0
+                                  else "shotgun" if dist < 11.0 else "ar")
+                    else:
+                        weapon = ("shotgun" if dist < 11.0
+                                  else "sniper" if dist > 50.0 else "ar")
+                    if weapon != p["hand"]:
+                        # Bots change weapon by range, and they pay for it the
+                        # same way a player does -- otherwise a bot closing to
+                        # shotgun range gets a free instant swap in the middle
+                        # of the one exchange where the delay matters most.
+                        if p["hand"] in CONFIG["LOADOUT"]:
+                            p["swap_ready"] = now + CONFIG["SWAP_TIME"]
+                        p["hand"] = weapon
+                    w = CONFIG["WEAPONS"][weapon]
+                    if p["reloading"] == weapon:
+                        pass            # wait it out; the tick finishes it
+                    elif now < p["swap_ready"]:
+                        # Still bringing it up. This has to be its own branch:
+                        # falling through to the firing one spends a round of
+                        # the burst on a shot do_shoot then refuses, so a swap
+                        # would silently eat the burst counter and trigger a
+                        # trigger-release pause the bot never earned.
+                        pass
+                    elif w["mag"] > 0 and p["ammo"].get(weapon, 0) <= 0:
+                        # A bot used to refill its own magazine the instant it
+                        # ran dry, so the one window a player has to punish --
+                        # the reload -- never opened. It reloads like everyone
+                        # else now, through the same fields the tick completes.
+                        p["reloading"] = weapon
+                        p["reload_until"] = now + w["reload"]
+                        bt["burst"] = 0
+                    else:
+                        # Cadence is the weapon's rate or the bot's reaction,
+                        # whichever is slower. Below the weapon's own rate the
+                        # extra attempts are refused by do_shoot and charged to
+                        # the burst anyway, which is the same waste by a
+                        # different route.
+                        bt["next_fire"] = now + max(w["rate"], cfg["react"] * 0.5)
+                        err = cfg["err"]
+                        shot = v_norm([dirv[0] + random.uniform(-err, err),
+                                       dirv[1] + random.uniform(-err, err),
+                                       dirv[2] + random.uniform(-err, err)])
+                        self.do_shoot(p, weapon, eye, shot,
+                                      random.getrandbits(32))
+                        # Trigger discipline. Held down, a bot is a beam that
+                        # never stops; cfg["burst"] is how many rounds it will
+                        # send before letting go and re-acquiring.
+                        bt["burst"] += 1
+                        if bt["burst"] >= cfg["burst"]:
+                            bt["burst"] = 0
+                            bt["next_fire"] = now + cfg["burst_gap"]
 
                 # close distance when pushing, back off otherwise. Style is
                 # what decides the range it wants to fight at -- a rusher lives
@@ -2743,42 +3087,112 @@ class Game(object):
                     ph = math.sin(now * 1.7 + p["id"])
                     want = v_add(v_scale(fwd, sign), v_scale(strafe, ph * 0.8))
             else:
+                # No sight line. Walking straight at the target grinds the bot
+                # into whatever is between them -- and the commonest thing
+                # between them is the bot's own cover. Drift sideways while
+                # closing, so it comes out from behind it rather than leaning
+                # on it for the rest of the round.
                 move = v_sub(target["pos"], p["pos"])
                 move[1] = 0.0
                 if v_len(move) > 0.1:
-                    want = v_norm(move)
+                    fwd = v_norm(move)
+                    strafe = v_norm([fwd[2], 0.0, -fwd[0]])
+                    # Commit to a side and hold it until sight comes back. A
+                    # sine strafe reverses every couple of seconds, which
+                    # against anything wide -- the box arena's centre platform
+                    # especially -- means dithering along its face forever:
+                    # half a metre left, half a metre right, never round it.
+                    # Odd and even ids pick opposite ways, so two bots hunting
+                    # each other go round opposite sides and actually meet.
+                    if bt["skirt"] == 0.0:
+                        bt["skirt"] = 1.0 if p["id"] % 2 else -1.0
+                    want = v_norm(v_add(fwd, v_scale(strafe, bt["skirt"] * 0.9)))
 
-        # panic-wall when recently hurt, ramp for height when it wants an angle
+        if not see:
+            bt["had_los"] = False
+
+        # Two different builds, for two different situations. Under fire, a
+        # piece goes AHEAD of the bot and the point of it is to be blind: that
+        # is what cover is. Not under fire, a piece goes UNDER the bot and the
+        # point of it is height -- the ramp-under-your-own-feet climb a player
+        # does, which lifts the bot over its sight line rather than across it.
+        #
+        # Building ahead in both cases is what used to break bots outright. A
+        # piece two metres in front of your face blocks the shot you are in
+        # the middle of taking, and the bot would place one, lose sight, walk
+        # into it, and spend the rest of the round there.
         if now >= bt["next_build"] and self.mode != "build":
-            hurt = now - p["last_dmg_at"] < 1.2
+            # Cover answers INCOMING FIRE. last_dmg_at moves for any damage at
+            # all, so without the second test a bot that clipped itself on a
+            # fall -- or stood in its own grenade -- reads that as being shot
+            # at and walls up in the middle of an empty field.
+            hurt = (now - p["last_dmg_at"] < 1.2
+                    and p["last_dmg_from"] not in (None, p["id"]))
             urge = 0.25 * sty["build"]
-            if hurt or (see and random.random() < urge):
+            # COVER wants a sight line to exist, because a wall is for breaking
+            # one -- and sight is symmetric here, so a bot that cannot see its
+            # target cannot be shot by it either. Without that condition a
+            # pinned turtle walled every 0.6s forever and never peeked out to
+            # return fire; it kept rebuilding cover it was already behind.
+            #
+            # HEIGHT must not wait for a sight line, and that is not symmetric
+            # with cover. Gating both on `see` deadlocks a bot that has lost
+            # its view: it cannot shoot, cannot build, and shuffles against
+            # whatever is in the way until the round ends. Ramping up is
+            # precisely how it gets its view back.
+            cover = hurt and see
+            # Nothing to gain from height it already has -- or from building
+            # at all with nobody to build against.
+            climbing = (target is not None and
+                        p["pos"][1] < target["pos"][1] + CONFIG["BOT_HEIGHT_EDGE"])
+            if cover or (climbing and random.random() < urge):
                 bt["next_build"] = now + cfg["build_cd"] / max(0.2, sty["build"])
                 yaw = math.radians(p["yaw"])
                 fwd = [-math.sin(yaw), 0.0, -math.cos(yaw)]
-                ahead = v_add(p["pos"], v_scale(fwd, CELL * 0.6))
-                cx = int(math.floor(ahead[0] / CELL))
-                cy = int(math.floor(p["pos"][1] / CELL))
-                cz = int(math.floor(ahead[2] / CELL))
                 d = self.dir_from_vec(fwd)
-                # hurt -> cover. Otherwise the style decides whether it
-                # walls up or takes height.
-                if hurt:
+                if cover:
+                    ahead = v_add(p["pos"], v_scale(fwd, CELL * 0.6))
+                    cx = int(math.floor(ahead[0] / CELL))
+                    cy = int(math.floor(p["pos"][1] / CELL))
+                    cz = int(math.floor(ahead[2] / CELL))
                     self.place(p, "wall" if random.random() < sty["wall_first"]
                                else "ramp", cx, cy, cz, d)
-                elif random.random() < sty["ramp"]:
-                    self.place(p, "ramp", cx, cy, cz, d)
                 else:
-                    self.place(p, "wall", cx, cy, cz, d)
+                    cx = int(math.floor(p["pos"][0] / CELL))
+                    cy = int(math.floor(p["pos"][1] / CELL))
+                    cz = int(math.floor(p["pos"][2] / CELL))
+                    self.place(p, "ramp", cx, cy, cz, d)
 
-        # stuck detection: steering, not pathfinding, so it will wedge
-        if v_dist(p["pos"], bt["last_pos"]) < 0.06 and v_len(want) > 0.1:
+        # Stuck detection: steering, not pathfinding, so it will wedge. There
+        # are two ways to be wedged and the old test only caught one.
+        #
+        #   not moving        -- pressed into a face, velocity killed
+        #   moving, no closer -- sliding ALONG a face, which is what a bot
+        #                        does against the centre platform of the box
+        #                        arena, and what any sideways drift while
+        #                        closing turns a dead stop into
+        #
+        # Two hard bots spent an entire duel doing the second one: thirteen
+        # metres apart on opposite sides of the platform, shuffling, never
+        # once firing. Progress toward the target is the honest measure, and
+        # it only means anything while there is no sight line -- with one, a
+        # turtle holding its range is meant to not be closing.
+        moved = v_dist(p["pos"], bt["last_pos"])
+        closing = True
+        if target is not None and not see:
+            d_now = v_dist(p["pos"], target["pos"])
+            closing = d_now < bt.get("last_dist", 1e9) - 0.02
+            bt["last_dist"] = d_now
+        else:
+            bt["last_dist"] = 1e9
+        if v_len(want) > 0.1 and (moved < 0.06 or not closing):
             bt["stuck_t"] += dt
         else:
             bt["stuck_t"] = 0.0
         bt["last_pos"] = list(p["pos"])
         if bt["stuck_t"] > 1.5:
             bt["stuck_t"] = 0.0
+            bt["last_dist"] = 1e9      # let the next window judge afresh
             if p["grounded"]:
                 p["vel"][1] = CONFIG["JUMP"]
             yaw = math.radians(p["yaw"])
@@ -2818,6 +3232,7 @@ class Game(object):
             left -= h
             p["grounded"], _ = step_move(p["pos"], p["vel"], p["crouch"],
                                          p["grounded"], h, boxes)
+        self.track_fall(p)
         if p["pos"][1] < CONFIG["KILL_Y"]:
             self.kill_player(p, p["last_dmg_from"] or p["id"])
 
@@ -2834,7 +3249,12 @@ class Game(object):
             self.phase = "live"
             self.broadcast({"t": "phase", "phase": "live"})
 
+        if (self.match_until and now >= self.match_until
+                and self.phase in ("countdown", "live")):
+            self.time_up()
+
         self.sweep_offline(now)
+        self.sweep_unready(now)
 
         # material regen
         if self.mode in ("duel", "dm"):
@@ -2867,8 +3287,8 @@ class Game(object):
 
         # grenades
         if self.grenades:
-            boxes = self.collision_boxes()
             for g in list(self.grenades):
+                boxes = self.static_boxes()
                 g["vel"][1] -= CONFIG["GRENADE_GRAVITY"] * dt
                 for ax in range(3):
                     step = g["vel"][ax] * dt
@@ -2935,6 +3355,36 @@ class Game(object):
             self.send_to(pid, {"t": "pong", "c": m.get("c")})
             return
 
+        if t == "ready":
+            # Sent as the last statement of the client's welcome handler, so
+            # arriving at all is the proof. See sweep_unready().
+            if not p["ready"]:
+                p["ready"] = True
+            return
+
+        if t == "clienterr":
+            # A client that threw while handling a message. It prints HERE
+            # because the screen showing the stack belongs to the player who
+            # hit it, and they are usually on another device -- "it lets me in
+            # but I cannot play" is not a bug report anyone can act on. Never
+            # broadcast: this is for the terminal running the server, and the
+            # strings in it came off the wire, so they are cut to length and
+            # stripped of the control characters that could scribble over it.
+            # Only the stack keeps its newlines: a field that may contain one
+            # is a field that can forge whole log lines, and the message type
+            # printed in the header is the obvious place to try it.
+            def clean(v, n, lines=False):
+                s = "".join(c for c in str(v)
+                            if (c == "\n" and lines) or " " <= c <= "~")
+                return s[:n]
+            print("  !! client error from %s (%s)" % (
+                clean(p["name"], 16), clean(m.get("at"), 24)))
+            print("     build %s | %s" % (
+                clean(m.get("build"), 48), clean(m.get("ua"), 180)))
+            for line in clean(m.get("err"), 2000, lines=True).split("\n")[:24]:
+                print("     " + line[:200])
+            return
+
         if t == "input":
             if not p["alive"]:
                 return
@@ -2960,6 +3410,7 @@ class Game(object):
             p["crouch"] = bool(m.get("cr"))
             p["grounded"] = bool(m.get("g"))
             p["ads"] = bool(m.get("ads"))
+            self.track_fall(p)
             return
 
         if t == "shoot":
@@ -3026,6 +3477,12 @@ class Game(object):
         if t == "switch":
             h = m.get("hand")
             if self.can_use(h) or h in CONFIG["BUILD_PIECES"]:
+                # Gun to gun costs the swap; anything involving a build piece
+                # does not. Putting a wall up and shooting through the gap is
+                # the game, and taxing it would be a different one.
+                if (h != p["hand"] and h in CONFIG["LOADOUT"]
+                        and p["hand"] in CONFIG["LOADOUT"]):
+                    p["swap_ready"] = time.time() + CONFIG["SWAP_TIME"]
                 p["hand"] = h
                 p["reloading"] = None
             return

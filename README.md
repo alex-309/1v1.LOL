@@ -287,10 +287,59 @@ weapon you don't have used to be.
 other weapon — they are a server-owned physics object rather than a hitscan,
 so they arc, bounce, and go off on a 3s fuse whether or not they hit anything.
 
+**You carry two of them, and that is all.** They are a count you spend, not a
+magazine you reload: pressing `R` will never give you another, and the only
+resupply is a fresh life. They used to be limited by nothing but their own 1.2s
+cooldown, which made 80 damage to a player and 160 to a build, forever, free —
+the strongest thing in any mode that handed them out. The hotbar shows how many
+are left rather than an infinity sign.
+
 **The pickaxe** does 20 to anything it reaches — players, bots, dummies and
 builds alike — at a swing every 0.7s. It is the free option when you are out of
 ammo and the way to take a wall down without spending bullets; breaking a piece
 you swung at refunds 5 materials.
+
+**Every match has a clock.** A duel runs 7 minutes, deathmatch and team
+matches 10. Whoever is ahead when it runs out takes it; level is a **draw**,
+not a coin toss — the end card says so, and says the clock decided it. The
+remaining time sits under the scoreline and turns red inside the last thirty
+seconds. Sandbox Build and the two trainers have no clock: they are not races.
+
+Without one a first-to-N has no way to end when neither side will take the risk
+of pushing — two turtles in a duel is a genuinely unbounded game — and on Vercel
+the function's own ceiling has been acting as the timer, cutting the socket
+mid-fight instead of finishing the match. Every limit lives in `CONFIG["MATCH_TIME"]`,
+per mode, and `0` means no clock.
+
+**Swapping guns costs a moment.** `SWAP_TIME` is 0.35s, enforced on both sides.
+Each weapon tracks its own fire rate, so an instant swap made shotgun → sniper →
+rifle strictly better than mastering any one of them — three shots in the time
+one should take. Switching **to or from a build piece is free**: putting a wall
+up and shooting through the gap is the game itself, not a trick to be taxed.
+Bots pay the same delay when they change weapon by range.
+
+**Being shot throws your aim.** A hit adds a view punch scaled by the damage
+that landed and capped by `FLINCH_MAX` — a rifle round nudges you about a third
+of a degree, a sniper hit a degree and a half. It rides the same punch recoil
+uses, so it decays the same way and it moves where you are actually pointing,
+not just what you see. Without it a fight is a pure damage race settled by who
+had more health when it started, and shooting first buys nothing but damage.
+Falls and your own grenade are exempt: the ground is not shooting at you.
+
+**Falling costs you.** A drop of more than 5.5 metres takes 11 health per
+metre beyond that, and it goes straight through shields — a shield stops
+bullets, not the ground. One storey is 4 metres, so riding your own ramps down
+is free by design; two storeys hurts, three nearly kills you, four kills you
+outright. The drop is measured from the highest point you reached after leaving
+the ground, so being shoved upward by someone's floor is not a fall, and neither
+is climbing.
+
+Height is the resource this whole game turns on, and it used to cost nothing to
+give back: you could tower thirty storeys, step off the top and walk away.
+Sandbox Build and the trainers are exempt, because falling is most of what you
+do in them. A fall names itself in the killfeed — *Alice fell* — rather than
+crediting Alice with killing Alice, which is where the server has to put a
+death nobody else caused.
 
 **Build health.** Every piece has 150 HP and visibly deteriorates as it takes
 damage — it splits, darkens and chips through five stages on its way to
@@ -545,6 +594,57 @@ actually practise against:
 
 A hard Turtle and a hard Rusher are completely different opponents.
 
+**Bots reload, and they wait before firing.** Difficulty sets a reaction time —
+0.40s on Easy down to 0.11s on Hard — measured from the moment you come into
+view, and a burst length after which the bot comes off the trigger and
+re-acquires. Their magazines are real: when one runs dry they reload through
+the same fields a player does, so a bot's reload is a window you can push,
+which is the most useful thing there is to practise against one.
+
+**Bots build for two different reasons.** Under fire, a piece goes *in front*
+of them and being blind behind it is the point — that is what cover is.
+Otherwise a ramp goes *under their own feet*, which is the climb a player
+actually does, and which lifts them over their sight line rather than across
+it. Building ahead in both cases is what used to break them outright: a bot
+would wall itself off mid-fight, lose sight of you, walk into its own wall and
+spend the rest of the round standing there.
+
+They also only take height while there is height worth taking — until roughly
+`BOT_HEIGHT_EDGE` above whoever they are fighting. Height is for getting an
+angle, and a bot that keeps ramping after it has one lays a fresh piece every
+half-second for the whole match. In a mode where builds persist that litter is
+charged to every collision test the server runs for the rest of the round.
+
+**Losing sight of you makes them commit to a side.** Steering is not
+pathfinding, so a bot with no sight line used to walk straight at you and grind
+into whatever was between you — very often its own cover. It now arcs, and it
+picks *one* way round and holds it until it sees you again; odd and even bots
+pick opposite ways, so two of them hunting each other go round opposite sides
+and meet. A strafe that reverses on a timer dithers along a wide obstacle
+forever instead of getting past it.
+
+Stuck detection asks whether the bot is getting **closer**, not whether it is
+moving. Sliding along the face of the box arena's centre platform is plenty of
+motion and no progress, and the old displacement test called it fine — two hard
+bots would spend an entire duel thirteen metres apart on opposite sides of that
+platform without firing a shot.
+
+**They pick a weapon by range, with hysteresis, and they pay the swap.** A bot
+keeps what it is holding until the range is clearly inside another band —
+without that, one sitting at twelve metres swapped rifle to shotgun and back
+forever and never finished bringing either up. Their firing cadence is the
+weapon's own rate or their reaction time, whichever is slower, so they no
+longer spend burst rounds on shots the server was always going to refuse.
+
+**Cover answers incoming fire, not any damage at all.** A bot that clipped
+itself on a fall used to read that as being shot at and wall up in the middle
+of an empty field, because the check only asked *how long since I was hurt* and
+never *by whom*.
+
+Their steering is still steering: the centre platform defeats it often enough
+that two bots in a duel do not reliably find each other. Real pathfinding is
+the fix, and it is not in here.
+
 ---
 
 ## Tuning the game
@@ -574,6 +674,40 @@ reconnect carries a token for a slot that already exists, and rate-limiting
 those would turn one dropped connection — or, on Vercel, a whole lobby dropping
 together when the function hits its max duration — into everybody locked out of
 their own match.
+
+---
+
+## Tests
+
+```
+tests/run.sh
+```
+
+Standard library only, like the rest of it. No pip install, no test runner, and
+nothing to start — the suite drives the `Game` object in `server.py` directly
+and never opens a socket.
+
+Two things make that practical. The sim gates almost everything on
+`time.time()` — fire rates, reloads, build cooldowns, reaction times — so
+`tests/harness.py` swaps the `time` module underneath `server.py` for a clock
+that only moves when a tick moves it. Six seconds of a bot fight runs in
+milliseconds and runs the same way every time. And bot behaviour is
+stochastic, so anything measuring it averages several seeded runs rather than
+asserting on one.
+
+The client half is checked too: macOS ships JavaScriptCore, and `new Function`
+parses a script without running a line of it, so `tests/jscheck.py` catches a
+syntax error in `index.html` without a browser. A few tests run small pieces of
+the page's own logic through `jsc` to check they behave, and one asserts that
+the two `BUILD_ID` stamps agree — which is the mistake the stamps exist to
+catch, made once already while writing them.
+
+What they mostly guard is the difference between **fighting and frozen**. Fire
+volume moves whenever anything is tuned — adding the 0.35s weapon swap roughly
+halved it — so assertions pinned near the ceiling break on every balance
+change and say nothing. The failure worth catching is a bot that walls across
+its own sight line and stands there for the rest of the round: zero or one
+shots in a whole match.
 
 ---
 

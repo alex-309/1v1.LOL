@@ -539,6 +539,13 @@ body.touchmode #chatin{left:16px;bottom:256px;width:min(430px,46vw)}
   clip-path:polygon(0 0,calc(100% - 11px) 0,100% 11px,100% 100%,11px 100%,0 calc(100% - 11px))}
 #topbar .sc{font:400 24px var(--fh);min-width:26px;text-align:center}
 #topbar .vs{color:var(--dim2);font-size:9.5px;letter-spacing:.18em;font-weight:700}
+/* Its own element rather than part of #topbar, because the bar is rebuilt
+   wholesale when the score changes and this ticks every second. */
+#matchclock{position:absolute;left:50%;top:64px;transform:translateX(-50%);
+  font:400 19px var(--fh);color:var(--dim);letter-spacing:.06em;
+  text-shadow:0 1px 3px rgba(0,0,0,.7);pointer-events:none}
+#matchclock.low{color:var(--bad)}
+body.touchmode #matchclock{top:58px;font-size:16px}
 
 #stat{position:absolute;left:30px;top:26px;font-size:11px;color:var(--dim2);line-height:1.85;
   letter-spacing:.06em}
@@ -699,6 +706,7 @@ body.touchmode #chatin{left:16px;bottom:256px;width:min(430px,46vw)}
 
   <div id="stat"></div>
   <div id="topbar" class="hidden"></div>
+  <div id="matchclock" class="hidden"></div>
 
   <div id="vitals">
     <div class="bar"><i id="hpf"></i><b>HP</b><span id="hpt">100</span></div>
@@ -1106,7 +1114,7 @@ if (!window.THREE) {
 /* =========================================================================
    0. Small utilities
    ========================================================================= */
-const BUILD_ID = 'BUILD 2026-09-16 replays-and-teams';
+const BUILD_ID = 'BUILD 2026-09-17 welcome-recovery';
 const $ = (id) => document.getElementById(id);
 const clamp = (v, a, b) => v < a ? a : (v > b ? b : v);
 const lerp = (a, b, t) => a + (b - a) * t;
@@ -1342,9 +1350,17 @@ const state = {
   running: false, paused: false, dead: false, spectator: false,
   hp: 100, shield: 100, mats: 500,
   hand: 'ar', ads: false, editing: null, buildRot: 0,
+  // Local clock (seconds) before the weapon just drawn can fire. Predicted so
+  // the click is refused here rather than silently dropped by the server.
+  swapReady: 0,
   teamScore: [0, 0],
   ammo: {}, reloadUntil: 0, reloadFor: 0, reloading: null,
   ping: 0, fps: 0, roundNo: 0,
+  /* When the match clock runs out, in local performance.now() terms. null
+     means this mode has no clock. The server sends seconds remaining rather
+     than a deadline -- a countdown is the one thing that does not have to
+     agree with the server to the millisecond. */
+  clockEnd: null,
   aim: null,
 };
 
@@ -1672,6 +1688,17 @@ const Net = {
           '\nserver build: ' + (Net.serverBuild || '(none sent)') +
           (mismatch ? '\n\nTHESE DO NOT MATCH. This page is stale -- hard-reload ' +
                       '(Cmd-Shift-R) before reading anything into the stack above.' : ''));
+        /* Say it out loud to the server too. The overlay above is on the
+           screen of whoever hit the bug, which is exactly the screen nobody
+           debugging it can see -- a phone on the far side of the room that
+           "joins but cannot play" is otherwise a report with no stack in it.
+           Wrapped in its own try: a throw in the reporter would land back in
+           this same catch and the failure would eat itself. */
+        try {
+          Net.send({ t: 'clienterr', at: m.t,
+                     err: (e && e.stack) || String(e),
+                     build: BUILD_ID, ua: navigator.userAgent });
+        } catch (_) { /* nothing left to report it with */ }
       }
     };
     ws.onclose = () => {
@@ -1732,10 +1759,24 @@ $('btnretry').onclick = () => location.reload();
    5. World construction
    ========================================================================= */
 const mats = {};
+/* getContext RETURNS NULL rather than throwing when the browser will not give
+   out another 2D surface, which on a memory-tight phone happens long before
+   anything else complains -- and the six textures below are the first real
+   allocation the game makes. Unchecked, that null surfaces as "cannot set
+   property fillStyle of null" from deep inside buildMaterials(), naming
+   neither the canvas nor the reason. Say which, and say why. */
+function tex2d(cv) {
+  const g = cv.getContext('2d');
+  if (!g) {
+    throw new Error('could not get a 2D canvas context at ' + cv.width + 'x' +
+      cv.height + ' -- this device is out of graphics memory');
+  }
+  return g;
+}
 function gridTexture(base, line, size, div) {
   const cv = document.createElement('canvas');
   cv.width = cv.height = size;
-  const g = cv.getContext('2d');
+  const g = tex2d(cv);
   g.fillStyle = base; g.fillRect(0, 0, size, size);
   g.strokeStyle = line; g.lineWidth = 2;
   const step = size / div;
@@ -1758,7 +1799,7 @@ function gridTexture(base, line, size, div) {
 function damagedWoodTex(stage) {
   const size = 256, cv = document.createElement('canvas');
   cv.width = cv.height = size;
-  const g = cv.getContext('2d');
+  const g = tex2d(cv);
   g.fillStyle = '#b08144'; g.fillRect(0, 0, size, size);
   g.strokeStyle = '#8d6231'; g.lineWidth = 2;
   const step = size / 3;
@@ -1897,9 +1938,39 @@ function buildArena() {
 }
 
 let sceneReady = false;
+/* Set on ENTRY, where sceneReady is set on the last line. The two are not the
+   same question and the difference is the whole bug this pair exists for: a
+   throw anywhere in here left sceneReady false, so the next welcome -- and a
+   welcome arrives again on every reconnect -- decided the scene had never been
+   built and called this a second time, asking for a fresh WebGL context on a
+   canvas that already had one. That throws too, forever. Started-but-not-ready
+   is a dead end to report, not a reason to try again. */
+let sceneInitStarted = false;
 function initScene() {
+  if (sceneInitStarted) return sceneReady;
+  sceneInitStarted = true;
   CELL = CFG.CELL; WALL_T = CFG.WALL_T;
-  renderer = new THREE.WebGLRenderer({ canvas: $('c'), antialias: true });
+
+  /* The one failure that is about the machine rather than the code. A device
+     with no usable WebGL cannot be rescued by anything further down, and the
+     raw constructor throw ("Error creating WebGL context") reaches the player
+     as a stack trace about a library they did not know they were running. */
+  try {
+    renderer = new THREE.WebGLRenderer({ canvas: $('c'), antialias: true });
+  } catch (e) {
+    // No amount of reconnecting produces a GPU. See the matching note in
+    // `case 'welcome'` for why retrying is worse than stopping.
+    Net.refused = true;
+    window.__fail('This device cannot run the 3D view',
+      'The browser could not start WebGL, which this game needs to draw ' +
+      'anything at all.\n\nUsually one of:\n' +
+      '  - hardware acceleration is switched off in the browser settings\n' +
+      '  - too many other 3D pages or tabs are open\n' +
+      '  - the browser is old, or in a reduced-power or private mode that ' +
+      'blocks it\n\nTry closing other tabs and reloading, or open the game in ' +
+      'a different browser.\n\n' + ((e && e.message) || String(e)));
+    throw e;
+  }
 
   /* A blank screen that does NOT come back is a different failure from the
      muzzle-flash whiteout that fxScale() handles: the browser has taken the
@@ -3600,6 +3671,7 @@ function canFire(w) {
   if (!spec) return false;
   if (state.reloading) return false;
   const now = performance.now() / 1000;
+  if (now < state.swapReady) return false;      // still bringing it up
   if (now - (lastShot[w] || 0) < spec.rate) return false;
   if (spec.mag > 0 && (state.ammo[w] || 0) <= 0) { autoReload(); return false; }
   return true;
@@ -3741,9 +3813,16 @@ function autoReload() {
 function throwGrenade() {
   if (!canUse('grenade')) return;
   const spec = CFG.WEAPONS.grenade;
+  // editNo is the existing "that is refused" note; an empty pouch is the
+  // same answer, and inventing a second refusal sound for it would not be.
+  if (spec.carry && (state.ammo.grenade || 0) <= 0) { Audio_.editNo(); return; }
+  if (performance.now() / 1000 < state.swapReady) return;
   const now = performance.now() / 1000;
   if (now - (lastShot.grenade || 0) < spec.rate) return;
   lastShot.grenade = now;
+  /* Predicted, so the HUD drops the moment you throw rather than a round trip
+     later. The server's `you` is still the authority and will correct it. */
+  if (spec.carry) { state.ammo.grenade = (state.ammo.grenade || 0) - 1; drawAmmo(); }
   const eye = eyePos(), d = camForward();
   Net.send({ t: 'grenade', o: [eye[0] + d[0] * 0.6, eye[1] + d[1] * 0.6, eye[2] + d[2] * 0.6], d: d });
 }
@@ -4246,6 +4325,7 @@ const deathcam = { active: false, spot: true, pos: null, by: null, byName: '',
    the live camera takes back over. */
 function startWatch(byId, byName) {
   deathcam.active = true;
+  deathcam.how = null;
   deathcam.spot = false;
   state.ads = false;
   firing = false;
@@ -4259,12 +4339,13 @@ function startWatch(byId, byName) {
   if (!startKillcam()) { deathcam.active = false; return false; }
   return true;
 }
-function startDeath(byId, byName, respawnIn) {
+function startDeath(byId, byName, respawnIn, how) {
   deathcam.active = true;
   deathcam.spot = true;
   deathcam.pos = me.pos.slice();
   deathcam.by = byId;
   deathcam.byName = byName || 'the void';
+  deathcam.how = how || null;
   deathcam.total = respawnIn > 0 ? respawnIn * 1000 : 0;
   deathcam.until = deathcam.total ? performance.now() + deathcam.total : 0;
   dcHint = '';
@@ -4346,8 +4427,10 @@ function drawDeathPanel() {
   el.classList.toggle('waiting', !killcam.active);
   el.querySelector('u').textContent = !deathcam.spot ? 'Round replay'
                                     : killcam.active ? 'Instant replay'
+                                    : deathcam.how ? 'Eliminated'
                                     : 'Eliminated by';
-  el.querySelector('b').textContent = deathcam.byName;
+  el.querySelector('b').textContent = deathcam.how ? deathcam.how.you
+                                                   : deathcam.byName;
   if (!killcam.active) deathBar(0);
   dcHint = '';
   drawDeathHint();
@@ -4685,8 +4768,15 @@ function drawAmmo() {
     $('ammom').textContent = ' mats';
     $('wname').textContent = w.toUpperCase();
   } else if (spec) {
-    $('ammon').textContent = spec.mag > 0 ? (state.ammo[w] || 0) : '∞';
-    $('ammom').textContent = spec.mag > 0 ? '/' + spec.mag : '';
+    if (spec.carry) {
+      /* Carried, not magazined: "2", not "2/2" and not the infinity the
+         pickaxe genuinely deserves. */
+      $('ammon').textContent = state.ammo[w] || 0;
+      $('ammom').textContent = '';
+    } else {
+      $('ammon').textContent = spec.mag > 0 ? (state.ammo[w] || 0) : '∞';
+      $('ammom').textContent = spec.mag > 0 ? '/' + spec.mag : '';
+    }
     $('wname').textContent = spec.name;
   }
 }
@@ -4764,12 +4854,32 @@ function killfeedNote(text) {
   $('killfeed').appendChild(d);
   setTimeout(() => d.remove(), 5200);
 }
-function feedKill(killer, victim) {
+/* Deaths nobody else caused. The server credits these to the victim because
+   it has nowhere else to put them, so without this the feed reads
+   "Alice ⟶ Alice", which looks like a bug rather than like a fall. */
+/* Two forms, because the same death is described to two audiences: the
+   killfeed is telling everyone else about you, your own death screen and
+   combat report are telling you about you. */
+const SELF_CAUSE = {
+  fall:    { they: 'fell',               you: 'Fell' },
+  grenade: { they: 'blew themselves up', you: 'Your own grenade' },
+};
+function selfCause(cause, byId, victimId) {
+  return (byId === victimId && SELF_CAUSE[cause]) || null;
+}
+
+function feedKill(killer, victim, how) {
   const f = document.createDocumentFragment();
-  const b = document.createElement('b'); b.textContent = killer;
-  const s = document.createTextNode('  ⟶  ');
-  const u = document.createElement('u'); u.textContent = victim;
-  f.appendChild(b); f.appendChild(s); f.appendChild(u);
+  if (how) {
+    const u = document.createElement('u'); u.textContent = victim;
+    f.appendChild(u);
+    f.appendChild(document.createTextNode('  ' + how.they));
+  } else {
+    const b = document.createElement('b'); b.textContent = killer;
+    const s = document.createTextNode('  ⟶  ');
+    const u = document.createElement('u'); u.textContent = victim;
+    f.appendChild(b); f.appendChild(s); f.appendChild(u);
+  }
   killfeed(f);
 }
 /* Damage numbers pop where the shot actually landed, not at the middle of the
@@ -4891,6 +5001,29 @@ function drawTopbar() {
     bar.appendChild(i ? n : s);
   });
 }
+let clockShown = '';
+function setClock(secs) {
+  state.clockEnd = (secs == null) ? null : performance.now() + secs * 1000;
+  clockShown = '';
+  drawClock();
+}
+function drawClock() {
+  const el = $('matchclock');
+  if (state.clockEnd == null || state.phase === 'ended' || state.mode === 'lobby') {
+    if (!el.classList.contains('hidden')) el.classList.add('hidden');
+    return;
+  }
+  const left = Math.max(0, (state.clockEnd - performance.now()) / 1000);
+  const m = Math.floor(left / 60), s = Math.floor(left % 60);
+  const txt = m + ':' + (s < 10 ? '0' : '') + s;
+  if (txt !== clockShown) {              // touch the DOM only when it changes
+    clockShown = txt;
+    el.textContent = txt;
+  }
+  el.classList.remove('hidden');
+  el.classList.toggle('low', left <= 30);
+}
+
 function drawBoard() {
   const t = $('boardt');
   t.innerHTML = '';
@@ -5019,6 +5152,8 @@ function handleMsg(m) {
       CFG = m.config; ARENA = m.arena; SPAWNS = m.spawns; DUMMIES = m.dummies;
       state.myId = m.id; state.hostId = m.host;
       state.mode = m.mode; state.phase = m.phase;
+      // A rejoin lands mid-match, so the clock comes with the slot.
+      setClock(m.clock == null ? null : m.clock);
       Net.token = m.token || null;      // the key back into this slot
       fillMaps(m.maps, m.map);
       fillBotStyles(m.config.BOT_STYLE);
@@ -5028,21 +5163,69 @@ function handleMsg(m) {
          fresh join -- full player list, full piece list -- because the client
          coming back has no idea what it missed and rebuilding is cheaper and
          far more reliable than trying to diff. What it must NOT do is stand up
-         a second renderer and a second frame loop. */
+         a second renderer and a second frame loop.
+
+         The question here is "is this page carrying a world from an earlier
+         connection?", which is what sceneReady answers. It is deliberately NOT
+         m.rejoined: the server means something narrower by that -- whether it
+         recognised the token -- and the two disagree whenever a token outlives
+         REJOIN_GRACE, where the server deals a brand-new player to a page that
+         is still holding a perfectly good renderer and a scene full of the last
+         session's pieces. That page has to be cleaned out, token or no. */
       const first = !sceneReady;
-      if (first) initScene();
-      else { wipePieces(); buildArena(); }
-      if (!first) {
+      if (first) {
+        /* Started but never finished: init already threw once and whatever
+           stopped it is still true, so calling it again only throws again --
+           on a canvas whose context was taken by the first attempt. The
+           overlay from that attempt is still on screen saying so.
+
+           Stop reconnecting as well. Without a `ready` the server takes the
+           slot back after READY_TIMEOUT and closes the socket, which reads as
+           a dropped connection and sends us round again -- appearing in
+           everyone's lobby and vanishing from it on a twenty-second loop.
+           `refused` is the existing "this is a considered no, not a lost
+           packet" flag that onclose already honours. */
+        if (sceneInitStarted) { Net.refused = true; break; }
+        // The camera is built FROM this, so it has to be sane BEFORE initScene
+        // rather than ten lines after it -- a 0 or "" restored from
+        // localStorage was reaching PerspectiveCamera unexamined.
+        settings.fov = settings.fov || CFG.FOV;
+        initScene();
+      } else {
+        if (CELL !== CFG.CELL || WALL_T !== CFG.WALL_T) {
+          /* initScene() latched these once and cut every ghost and build-piece
+             geometry to them. A server that restarted on different numbers
+             while this page stayed open cannot be followed without rebuilding
+             all of it, and running on half-old geometry puts the ghost where
+             the piece will not actually go. */
+          window.__fail('The server changed its size constants',
+            'This page built its geometry when a cell was ' + CELL + ' and a ' +
+            'wall was ' + WALL_T + '; the server now says ' + CFG.CELL + ' and ' +
+            CFG.WALL_T + '. Reload (Cmd-Shift-R) to pick up the new numbers.');
+        }
+        wipePieces();
+        buildArena();
         for (const id of Array.from(state.players.keys())) {
           if (id !== m.id) dropPlayer(id);
         }
       }
       for (const p of m.players) ensurePlayer(p);
+      /* Colour is decided per body as it is built, against myTeam() -- and
+         myTeam() reads state.players, which does not contain YOU until the
+         loop above reaches your own entry. Everyone dealt before that was
+         skinned against team 0, so joining a team match seated on team 1 put
+         your team in enemy red and the enemy in friendly blue. One pass once
+         the roster is whole settles it; `mode` has always done the same. */
+      if (state.mode === 'team') reskinAllBodies();
       for (const p of m.pieces) addPiece(p);
       setDummies(m.dummies);
-      settings.fov = settings.fov || CFG.FOV;
       state.ammo = {};
-      for (const w of CFG.LOADOUT) state.ammo[w] = CFG.WEAPONS[w].mag;
+      // Mirrors starting_ammo() in server.py: a grenade is CARRIED, not
+      // magazined, and reading mag for it hands out a pouch of zero.
+      for (const w of CFG.LOADOUT) {
+        const spec = CFG.WEAPONS[w];
+        state.ammo[w] = spec.carry == null ? spec.mag : spec.carry;
+      }
       /* Coming back mid-match means coming back to what you had: your health,
          your materials, your magazine and your score. Handing out a fresh set
          would make dropping your connection worth doing on purpose. */
@@ -5056,6 +5239,14 @@ function handleMsg(m) {
       if (m.phase === 'lobby' || !m.mode || m.mode === 'lobby') enterLobby();
       else { enterMatch(true); }
       if (first) startLoop();
+      /* The last statement in the handler, and that position is the whole
+         point: reaching it is the only proof that every step above survived
+         this particular device. Until it arrives the server has a player
+         record and a broadcast join that everyone else can see, backed by a
+         page that may already be dead behind an error overlay. An open socket
+         cannot tell the difference -- the browser answers protocol pings from
+         its network stack with no JavaScript involved at all. */
+      Net.send({ t: 'ready' });
       break;
     }
     case 'rejoin': {
@@ -5112,7 +5303,6 @@ function handleMsg(m) {
       refreshLobby();
       break;
     case 'state':
-      state.ping = state.ping * 0.9 + 0.1 * state.ping;
       pushSnapshot(m);
       if (m.gs) {
         const seen = new Set();
@@ -5131,7 +5321,16 @@ function handleMsg(m) {
       }
       break;
     case 'pong':
-      state.ping = performance.now() - m.c;
+      /* Smoothed, because a single round trip is a noisy sample of a link and
+         a readout that jumps 40ms every second tells you less than one that
+         settles. Samples arrive at 1Hz, so the weight has to be light enough
+         to converge in a few seconds -- the 0.9/0.1 this was written as would
+         have taken twenty. The first sample is taken raw so the HUD shows a
+         real number immediately rather than climbing out of zero. */
+      {
+        const rtt = performance.now() - m.c;
+        state.ping = state.ping > 0 ? state.ping * 0.7 + 0.3 * rtt : rtt;
+      }
       break;
     case 'you':
       /* Keyed off the damage, not off the drop in hp. A shot stopped entirely
@@ -5139,11 +5338,28 @@ function handleMsg(m) {
          person shooting at you -- which is the one thing you needed. */
       if (m.dmg > 0) {
         Audio_.hurt();
-        damageDirection(m.from);
-        combatEntry('in', m.by, m.bn, m.dmg, m.head, m.w,
+        /* A fall has no direction to point at and nobody to name -- the server
+           credits it to you because there is nowhere else to put it, and an
+           arrow pointing at your own feet is noise. */
+        const hurtBy = selfCause(m.w, m.by, state.myId);
+        /* Flinch. A hit throws your view, which is what makes shooting first
+           worth something beyond the damage it does. It rides the recoil
+           punch, so it decays the same way and -- because camForward() reads
+           the camera, punch included -- it moves where you are actually
+           pointing, not just what you see. Self-inflicted damage is exempt:
+           the ground is not shooting at you. */
+        if (!hurtBy) {
+          const kick = Math.min(CFG.FLINCH_MAX || 0,
+                                (CFG.FLINCH || 0) * m.dmg / 100);
+          recoilPitch += kick;
+          recoilYaw += (Math.random() - 0.5) * kick;
+        }
+        damageDirection(hurtBy ? null : m.from);
+        combatEntry('in', m.by, hurtBy ? hurtBy.you : m.bn, m.dmg, m.head, m.w,
                     clamp((m.hp || 0) / CFG.HP_MAX, 0, 1),
-                    m.from ? Math.hypot(m.from[0] - me.pos[0], m.from[1] - me.pos[1],
-                                        m.from[2] - me.pos[2]) : null, false);
+                    hurtBy || !m.from ? null
+                      : Math.hypot(m.from[0] - me.pos[0], m.from[1] - me.pos[1],
+                                   m.from[2] - me.pos[2]), false);
       }
       if (m.hp !== undefined) state.hp = m.hp;
       if (m.shield !== undefined) state.shield = m.shield;
@@ -5230,7 +5446,8 @@ function handleMsg(m) {
       break;
     }
     case 'die': {
-      feedKill(m.kn, m.vn);
+      const how = selfCause(m.cause, m.by, m.id);
+      feedKill(m.kn, m.vn, how);
       const rp = state.players.get(m.id);
       if (rp) { rp.alive = false; rp.deaths++; }
       const k = state.players.get(m.by);
@@ -5240,8 +5457,8 @@ function handleMsg(m) {
         cancelEdit();
         // The panel names the killer itself, so the banner is only there for
         // the case where there is no replay to put one up.
-        if (!startDeath(m.by, m.kn, m.rt || 0)) {
-          roundMessage('ELIMINATED', 'by ' + m.kn, 2600);
+        if (!startDeath(m.by, m.kn, m.rt || 0, how)) {
+          roundMessage('ELIMINATED', how ? how.you : 'by ' + m.kn, 2600);
         }
       } else {
         if (m.by === state.myId) roundMessage('ELIMINATED ' + m.vn.toUpperCase(), '', 1400);
@@ -5314,6 +5531,7 @@ function handleMsg(m) {
     case 'mode':
       state.mode = m.mode;
       state.phase = m.phase;
+      setClock(m.clock == null ? null : m.clock);
       if (m.players) { for (const p of m.players) ensurePlayer(p); }
       /* Branch on PHASE, not mode. The server also broadcasts this message
          when the host merely picks a different mode card in the lobby -- with
@@ -5328,6 +5546,7 @@ function handleMsg(m) {
       break;
     case 'matchend': {
       state.phase = 'ended';
+      setClock(null);
       endDeath();
       showEnd(m);
       break;
@@ -5680,11 +5899,16 @@ function hideIntermission() {
 function showEnd(m) {
   hideIntermission();
   // a team match is won by a side, not a person
-  const win = m.team != null ? (m.team === myTeam()) : (m.winner === state.myId);
-  $('endtitle').textContent = win ? 'You win' : (m.name + ' wins');
-  $('endtitle').style.color = win ? 'var(--gold)' : 'var(--txt)';
-  $('endsub').textContent = { duel: 'Duel complete', team: 'Team match complete',
-                              dm: 'Deathmatch complete' }[state.mode] || 'Match complete';
+  /* A draw is neither a win nor a loss, and it has no name to put on the card
+     -- without this the title reads "Draw wins". */
+  const draw = !!m.draw;
+  const win = !draw && (m.team != null ? (m.team === myTeam())
+                                       : (m.winner === state.myId));
+  $('endtitle').textContent = draw ? 'Draw' : (win ? 'You win' : m.name + ' wins');
+  $('endtitle').style.color = draw ? 'var(--txt)'
+                                   : (win ? 'var(--gold)' : 'var(--txt)');
+  const what = { duel: 'Duel', team: 'Team match', dm: 'Deathmatch' }[state.mode] || 'Match';
+  $('endsub').textContent = m.timeup ? what + ' — time' : what + ' complete';
   const t = $('endtable');
   t.innerHTML = '';
   /* Kills and deaths say who won; the rest says how. Accuracy is per trigger
@@ -6279,9 +6503,19 @@ addEventListener('wheel', (e) => {
 function setHand(h) {
   if (state.hand === h) return;
   if (!isBuildHand(h) && !canUse(h)) return;    // not in this mode's loadout
+  /* The server mirrors the hand rather than owning it, and until now nothing
+     ever told it: it learned your weapon only when you fired one. It needs to
+     know up front to charge the swap, so every change is announced. */
+  const wasGun = !isBuildHand(state.hand), isGun = !isBuildHand(h);
   state.hand = h;
   state.reloading = null;
   if (isBuildHand(h)) state.ads = false;
+  // Gun to gun costs the swap. Anything involving a build piece does not --
+  // putting a wall up and shooting through the gap is the game itself.
+  state.swapReady = (wasGun && isGun)
+    ? performance.now() / 1000 + (CFG.SWAP_TIME || 0)
+    : 0;
+  Net.send({ t: 'switch', hand: h });
   drawSlots(); drawAmmo();
   Audio_.blip(520, 0.03, 'square', 0.07);
 }
@@ -6513,9 +6747,20 @@ function frame(now) {
         });
       }
     }
-    accPing += dt;
-    if (accPing > 1) { accPing = 0; Net.send({ t: 'ping', c: performance.now() }); }
+    drawClock();
   }
+
+  /* Outside the block above on purpose: while it lived in the
+     running-and-not-paused branch the ping stopped in the lobby, at the pause
+     menu and on the death screen, so the HUD's latency readout was blank in
+     exactly the places you sit still long enough to read it.
+
+     Note this is NOT what tells the server the page is alive -- rAF stops
+     entirely on a backgrounded tab, so silence here means "alt-tabbed" at
+     least as often as it means "dead" and nothing may be reaped on it. The
+     handshake ack in `case 'welcome'` carries that. */
+  accPing += dt;
+  if (accPing > 1) { accPing = 0; Net.send({ t: 'ping', c: performance.now() }); }
 
   if (renderer && scene && camera && !contextLost) renderer.render(scene, camera);
 }
