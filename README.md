@@ -172,8 +172,17 @@ Phones and tablets get the mode by default; anything else has to ask for it.
 | `AIM` | Aim down sights, also a latch — a touchscreen cannot ask you to hold a modifier with both thumbs already busy |
 | `FIRE` | Fire or place a piece; hold to turbo-build |
 | `R` `EDIT` `ROT` | Reload, edit a piece, rotate the ramp or cone |
+| While editing | `FIRE` taps tiles on and off, then **CONFIRM** cuts them — nothing is sent until you confirm |
 | Slot row | The chips along the bottom pick your weapon or build piece |
 | `MENU` `SCORE` | Top left: pause and settings, and the scoreboard (tap it again to close) |
+
+**Editing works differently here, and it has to.** A mouse edit is one gesture
+— hold, sweep across the tiles, release to apply — and the release is what
+commits. Given to a thumb that meant a single tap selected one tile and
+immediately committed it, so there was no way to cut a second. In touch mode a
+tap toggles a tile instead, as many as you like, and a **CONFIRM** button sends
+the cut. **CANCEL** backs out. You can see the selection and change your mind
+before anything happens to the piece.
 
 Two fingers work at once, so you can walk and look at the same time. **Look
 speed** has its own slider in the pause menu — a thumb swipe and a mouse move
@@ -543,6 +552,13 @@ The first person to connect is the host, picks the mode, and can override the
 map — Open Yard, Box Fight or Towers — or leave it on Auto for whatever the mode
 wants.
 
+**The countdown.** Every round opens with three seconds on a counter, and
+**nobody moves until it hits zero** — the server refuses off-phase movement as
+well as the client, so it is a rule rather than an honour system. Looking around
+stays free. The number is on screen for the whole of it, including the opening
+countdown of a match, where there is no round card in front of it and the screen
+used to simply sit there empty.
+
 **Picking sides.** Choose Team Fight in the lobby and the player list becomes
 **two columns, one per side**, each showing who is on it and carrying a **Join
 Team 1 / Join Team 2** button. Press the other side's button to move yourself.
@@ -738,18 +754,19 @@ menu, and `http://localhost:7777/whoami` reports what is actually running.
 line. If it mentions three.js, run `start.command` once while online so it can
 download `three.min.js` (633 KB) next to `index.html`.
 
-**"Your browser blocked mouse lock."** Some browsers and extensions refuse
-pointer lock outright. The game says so once and then lets you play anyway —
-look by holding the left button and dragging. Clicking keeps quietly retrying,
-and the moment a lock succeeds the message clears itself.
+**The mouse cursor stays visible.** Some browsers and extensions refuse pointer
+lock outright. Nothing blocks you: look by holding the left button and dragging
+instead. Clicking keeps quietly retrying, and the moment a lock succeeds the
+cursor disappears and looking goes back to normal.
 
 **Escape opens the pause menu on the first press.** It did not always: browsers
 treat Escape as *their own* gesture for leaving pointer lock and never deliver
-the keydown to the page, so the handler that opens the menu never ran and you
-got a "click to play" overlay instead — press Escape a second time and that one
-arrived. The game now reads an unrequested loss of pointer lock as the request
-it actually was. If you are on a touchscreen there is no Escape key at all: use
-the **MENU** button top left.
+the keydown to the page, so the handler that opens the menu never ran. The game
+now reads an unrequested loss of pointer lock as the request it actually was.
+There is no click-to-play overlay in front of it any more either — a match
+starts playable, and the first click you make in the game is what captures the
+mouse. If you are on a touchscreen there is no Escape key at all: use the
+**MENU** button top left.
 
 **The screen goes white.** Two different faults wore this face. A muzzle flash
 is a bright sphere at the shooter's eye, and the third-person camera collapses

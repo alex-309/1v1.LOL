@@ -3388,6 +3388,16 @@ class Game(object):
         if t == "input":
             if not p["alive"]:
                 return
+            # Nobody moves before the round goes live. The client freezes itself
+            # too, but a client is not where a rule lives: without this, a
+            # modified one walks out of spawn during the countdown and starts
+            # the round holding ground nobody else could have taken. Aim still
+            # tracks, so everyone's view of everyone else stays honest.
+            if self.phase != "live":
+                p["yaw"] = float(m.get("yaw", p["yaw"]))
+                p["pitch"] = float(m.get("pitch", p["pitch"]))
+                p["vel"] = [0.0, 0.0, 0.0]
+                return
             pos = m.get("p")
             if not (isinstance(pos, list) and len(pos) == 3):
                 return

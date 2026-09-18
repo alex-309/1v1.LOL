@@ -313,9 +313,9 @@ kbd{display:inline-block;min-width:26px;text-align:center;background:var(--panel
    press/release handlers the mouse and keyboard use, so there is no second
    input path to keep in step.
 
-   z-index sits BELOW #clickplay (20), #board (30) and the veils (40) on
-   purpose: the tap-to-play gate, the scoreboard and the pause menu each have
-   to be able to cover the controls, or you would be shooting through them. */
+   z-index sits BELOW #board (30) and the veils (40) on purpose: the
+   scoreboard and the pause menu each have to be able to cover the controls,
+   or you would be pressing buttons through them. */
 #touch{position:fixed;inset:0;z-index:15;pointer-events:none;touch-action:none;
   user-select:none;-webkit-user-select:none}
 #touch.hidden{display:none}
@@ -337,6 +337,27 @@ kbd{display:inline-block;min-width:26px;text-align:center;background:var(--panel
 .ts{padding:8px 12px;font:700 9.5px var(--fb);letter-spacing:.12em;
   background:rgba(8,13,20,.72);border:1px solid var(--line2);color:var(--dim);
   clip-path:polygon(0 0,calc(100% - 6px) 0,100% 6px,100% 100%,6px 100%,0 calc(100% - 6px))}
+/* Editing, on a touchscreen. A mouse edit is one gesture -- hold, sweep,
+   release -- and that does not survive the trip to a thumb: the release is
+   what applied, so a tap selected one tile and immediately committed it, and
+   there was no way to cut a second. Here a tap TOGGLES a tile and nothing is
+   sent until you confirm, which also makes the selection something you can
+   look at and change your mind about. */
+#tedit{position:absolute;left:50%;bottom:24px;transform:translateX(-50%);
+  display:flex;flex-direction:column;align-items:center;gap:7px;pointer-events:auto}
+#tedit.hidden{display:none}
+#tedit u{text-decoration:none;font:700 9px var(--fb);letter-spacing:.16em;
+  text-transform:uppercase;color:var(--dim2);background:rgba(8,13,20,.8);padding:4px 10px}
+#tedit div{display:flex;gap:8px}
+#tedit button{padding:13px 22px;font:700 11px var(--fb);letter-spacing:.14em;
+  background:rgba(8,13,20,.86);border:1px solid var(--line2);color:var(--dim);
+  clip-path:polygon(0 0,calc(100% - 8px) 0,100% 8px,100% 100%,8px 100%,0 calc(100% - 8px))}
+#tedit button.ok{border-color:var(--accent);color:#fff;background:rgba(29,88,128,.62)}
+#tedit button:disabled{opacity:.45}
+/* the confirm bar and the hand picker want the same patch of screen, and while
+   you are editing you are not switching weapons */
+#touch.editing #tslots{display:none}
+
 /* the hand picker sits in the gap the stick and the buttons leave between
    them, so it never lands on top of either however many slots the mode gives */
 #tslots{position:absolute;left:50%;bottom:24px;transform:translateX(-50%);
@@ -524,6 +545,20 @@ body.touchmode #chatin{left:16px;bottom:256px;width:min(430px,46vw)}
 @keyframes kfin{from{opacity:0;transform:translateX(18px)}}
 
 /* round banner */
+/* The pre-round countdown. It sits above the round card (z-55) rather than
+   inside it, because it has to read the same at the start of a match -- where
+   there is no card at all and the screen was simply blank for three seconds. */
+#countdown{position:fixed;left:50%;top:11%;transform:translateX(-50%);text-align:center;
+  z-index:58;pointer-events:none}
+#countdown.hidden{display:none}
+#countdown b{display:block;font:400 82px/1 var(--fh);letter-spacing:.02em;color:#fff;
+  text-shadow:0 0 34px rgba(57,208,255,.5),0 3px 18px rgba(0,0,0,.8)}
+#countdown i{display:block;font-style:normal;font:700 10px var(--fb);letter-spacing:.24em;
+  color:var(--accent);text-transform:uppercase;margin-top:8px}
+/* a beat per number, so it reads as counting rather than as a stuck figure */
+#countdown.tick b{animation:cdpop .5s cubic-bezier(.2,.8,.3,1)}
+@keyframes cdpop{from{transform:scale(1.35);opacity:.35}}
+
 #roundmsg{position:absolute;left:50%;top:17%;transform:translateX(-50%);text-align:center;
   text-shadow:0 4px 22px rgba(0,0,0,.95);pointer-events:none}
 #roundmsg b{display:block;font:400 56px/1 var(--fh);letter-spacing:.03em;
@@ -631,14 +666,6 @@ body.touchmode #matchclock{top:58px;font-size:16px}
 #chatin{position:absolute;left:30px;bottom:138px;width:430px;pointer-events:auto;display:none}
 
 /* click to play */
-#clickplay{position:fixed;inset:0;z-index:20;display:flex;flex-direction:column;
-  align-items:center;justify-content:center;gap:12px;pointer-events:auto;cursor:pointer;
-  background:rgba(4,7,12,.55);backdrop-filter:blur(3px)}
-#clickplay div{font:400 34px var(--fh);letter-spacing:.06em;
-  animation:breathe 2.4s ease-in-out infinite}
-#clickplay span{font-size:13px;color:var(--dim);letter-spacing:.13em;text-transform:uppercase}
-@keyframes breathe{0%,100%{opacity:.62}50%{opacity:1}}
-
 /* scoreboard */
 #board{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
   background:rgba(4,7,12,.86);z-index:30;backdrop-filter:blur(4px)}
@@ -749,13 +776,10 @@ body.touchmode #matchclock{top:58px;font-size:16px}
   </div>
 </div>
 
+<div id="countdown" class="hidden"><b></b><i></i></div>
+
 <div id="scope"></div>
 <div id="dmgflash"></div>
-
-<div id="clickplay" class="hidden">
-  <div>CLICK TO PLAY</div>
-  <span>locks your mouse &middot; press Esc for the menu</span>
-</div>
 
 <div id="stale" class="hidden"></div>
 
@@ -980,6 +1004,13 @@ body.touchmode #matchclock{top:58px;font-size:16px}
     <button class="tb" data-act="rotate">ROT</button>
   </div>
   <div id="tslots"></div>
+  <div id="tedit" class="hidden">
+    <u>Tap the tiles to cut</u>
+    <div>
+      <button class="ok" data-act="applyedit">CONFIRM</button>
+      <button data-act="canceledit">CANCEL</button>
+    </div>
+  </div>
 </div>
 
 <!-- ---------------- between rounds ---------------- -->
@@ -1361,6 +1392,9 @@ const state = {
      than a deadline -- a countdown is the one thing that does not have to
      agree with the server to the millisecond. */
   clockEnd: null,
+  /* When the pre-round countdown ends, in local performance.now() terms. Same
+     reasoning as clockEnd: the server sends a duration, not a deadline. */
+  phaseEnd: null,
   aim: null,
 };
 
@@ -2580,20 +2614,27 @@ const keys = Object.create(null);
 function eyeHeight() { return me.crouch ? CFG.EYE_CROUCH : CFG.EYE; }
 function eyePos() { return [me.pos[0], me.pos[1] + eyeHeight(), me.pos[2]]; }
 
-function updateLocal(dt) {
+/* `frozen` runs the physics without the player driving it: gravity, collision
+   and standing still. That is the countdown -- you are in the world and it is
+   still solid under you, you simply do not get to go anywhere yet. Skipping
+   the whole function instead would leave anyone spawned over a gap hanging in
+   the air until the round went live. */
+function updateLocal(dt, frozen) {
   const boxes = getColliders();
   const K = settings.keys;
-  const wantCrouch = !!keys[K.crouch];
+  const wantCrouch = !frozen && !!keys[K.crouch];
   if (me.crouch && !wantCrouch) {
     const ab = playerAABB(me.pos, false);       // headroom check before standing
     if (!overlapAny(ab[0], ab[1], boxes)) me.crouch = false;
   } else if (!me.crouch && wantCrouch) me.crouch = true;
 
   let fx = 0, fz = 0;
-  if (keys[K.forward]) fz -= 1;
-  if (keys[K.back]) fz += 1;
-  if (keys[K.left]) fx -= 1;
-  if (keys[K.right]) fx += 1;
+  if (!frozen) {
+    if (keys[K.forward]) fz -= 1;
+    if (keys[K.back]) fz += 1;
+    if (keys[K.left]) fx -= 1;
+    if (keys[K.right]) fx += 1;
+  }
   const l = Math.hypot(fx, fz);
   if (l > 0) { fx /= l; fz /= l; }
   const yr = me.yaw * DEG;
@@ -2613,7 +2654,7 @@ function updateLocal(dt) {
     const damp = Math.max(0, 1 - CFG.FRICTION * dt);
     me.vel[0] *= damp; me.vel[2] *= damp;
   }
-  if (keys[K.jump] && me.grounded) { me.vel[1] = CFG.JUMP; me.grounded = false; }
+  if (!frozen && keys[K.jump] && me.grounded) { me.vel[1] = CFG.JUMP; me.grounded = false; }
 
   if (unstick(me.pos, me.crouch, boxes) && me.vel[1] < 0) me.vel[1] = 0;
 
@@ -4938,6 +4979,28 @@ function roundMessage(big, small, ms) {
   clearTimeout(roundMessage._t);
   roundMessage._t = setTimeout(() => r.classList.add('hidden'), ms || 1600);
 }
+/* The pre-round countdown, drawn from the deadline rather than from a ticker,
+   so it stays right through a dropped frame or a tab switch. It reads "empty"
+   the moment there is nothing to count: phase is not countdown, or the
+   deadline has passed and we are waiting on the server's go. */
+let cdHint = '';
+function drawCountdown() {
+  const el = $('countdown');
+  const on = state.running && state.phase === 'countdown' && state.phaseEnd != null;
+  const left = on ? (state.phaseEnd - performance.now()) / 1000 : 0;
+  // ceil, so three seconds left reads "3" and the last tick is "1", never "0"
+  const n = on && left > 0 ? Math.max(1, Math.ceil(left)) : 0;
+  const hint = n + '|' + (state.roundNo || 0);
+  if (hint === cdHint) return;
+  cdHint = hint;
+  if (!n) { el.classList.add('hidden'); return; }
+  el.classList.remove('hidden');
+  el.firstElementChild.textContent = n;
+  el.lastElementChild.textContent = state.roundNo > 0
+    ? 'Round ' + (state.roundNo + 1) + ' starts in' : 'Get ready';
+  // restart the beat on every new number
+  el.classList.remove('tick'); void el.offsetWidth; el.classList.add('tick');
+}
 function drawCrosshair() {
   const spec = CFG.WEAPONS[state.hand];
   let s = 4;
@@ -5502,6 +5565,10 @@ function handleMsg(m) {
     case 'round':
       state.roundNo = m.n;
       state.phase = 'countdown';
+      /* The server holds the round for the countdown PLUS the replay it just
+         played, so the deadline has to cover both or the number on screen
+         reaches zero while the round is still waiting on the replay. */
+      state.phaseEnd = performance.now() + ((m.until || 3) + (m.replay || 0)) * 1000;
       if (m.teams) state.teamScore = m.teams.slice();
       /* The round message arrives in the same tick as the kill that caused
          it, which is why this used to be the bug that stopped replays working
@@ -5520,6 +5587,8 @@ function handleMsg(m) {
       break;
     case 'phase':
       state.phase = m.phase;
+      state.phaseEnd = m.phase === 'countdown'
+        ? performance.now() + (m.until || 3) * 1000 : null;
       // a round boundary must not leave a replay running over live play
       if (m.phase !== 'live') endDeath();
       if (m.phase === 'live') {
@@ -5527,6 +5596,7 @@ function handleMsg(m) {
         roundMessage('FIGHT', '', 900);
         Audio_.roundStart();
       }
+      drawCountdown();
       break;
     case 'mode':
       state.mode = m.mode;
@@ -5539,6 +5609,10 @@ function handleMsg(m) {
          into the match HUD with no match running, leaving phase stuck at
          'lobby' so nothing could ever shoot or build. */
       state.teamScore = [0, 0];
+      // the opening countdown, which has no round card in front of it -- this
+      // is the stretch that used to be three seconds of nothing at all
+      state.phaseEnd = m.phase === 'countdown'
+        ? performance.now() + (m.until || 3) * 1000 : null;
       if (m.mode !== 'trainer') { clearCourse(); course.gates = []; drawCourse(); }
       if (m.players) reskinAllBodies();
       if (m.phase === 'lobby') { chosenMode = m.mode; enterLobby(); }
@@ -5837,21 +5911,12 @@ function enterMatch(resuming) {
   if (state.spectator) { spec.mode = 'follow'; specCycle(1); }
   drawSpecBar();
   $('hud').classList.toggle('spectating', state.spectator);
-  /* One deliberate press before the match takes input. In touch mode it also
-     keeps the tap that dismisses it from being read as the first shot. */
-  paintGate();
-  $('clickplay').classList.remove('hidden');
+  /* No gate. A match starts playable: the mouse is captured by the first
+     click you make IN the game, and until then you can still look by dragging.
+     The old click-to-play wall was one more thing between a player and the
+     match, and when pointer lock was refused it was a wall with nothing behind
+     the door -- which is how people got stuck trying to start the game. */
   syncTouchUI(true);
-}
-/* Worded for whichever mode is live now. It is repainted on a mode change as
-   well as at the start of a match, because the gate outlives both -- losing
-   pointer lock puts it back up long after enterMatch ran. */
-function paintGate() {
-  const cp = $('clickplay');
-  cp.firstElementChild.textContent = touchMode() ? 'TAP TO PLAY' : 'CLICK TO PLAY';
-  cp.lastElementChild.textContent = touchMode()
-    ? 'left stick moves · drag to look · MENU for settings'
-    : 'locks your mouse · press Esc for the menu';
 }
 /* The beat between rounds. Who took it, the score, and the running stats --
    so a first-to-5 reads as five rounds rather than one fight that keeps
@@ -5952,7 +6017,6 @@ function showEnd(m) {
    17. Input
    ========================================================================= */
 let lockFailed = false;        // refused at least once: drag-look is the fallback
-let lockNagged = false;        // the gate has said its piece; stop re-raising it
 let lockExitWanted = false;    // WE let go, as opposed to the player pressing Esc
 function requestLock() {
   /* Nothing to lock in touch mode, and asking anyway is not harmless: a
@@ -5986,28 +6050,18 @@ function releaseLock() {
 /* A refused pointer-lock request fires pointerlockerror and nothing else --
    pointerlockchange never runs. Without this the game just eats every click
    forever with no clue why. */
+/* A refusal is not an error the player has to do anything about: it just means
+   this browser will not hide the cursor, so looking falls back to dragging.
+   Recording it is the whole handler -- putting a wall on screen about it is
+   what used to leave people unable to start. */
 document.addEventListener('pointerlockerror', () => {
   if (touchMode()) return;          // expected: there is no pointer to lock
   lockFailed = true;
-  /* Say it ONCE. onPress asks for a lock on every click, so re-raising the
-     gate on every refusal meant: click to dismiss it, click to shoot, gate
-     back up, forever -- a live match running behind a wall you could not get
-     past. After the first telling the player keeps playing with drag-look and
-     clicks keep quietly trying to re-lock. */
-  if (!state.running || state.paused || lockNagged) return;
-  lockNagged = true;
-  const cp = $('clickplay');
-  cp.classList.remove('hidden');
-  cp.lastElementChild.textContent =
-    'your browser blocked mouse lock — click to try again, or look by dragging';
 });
 document.addEventListener('pointerlockchange', () => {
   if (touchMode()) return;          // the gate is dismissed by tapping it
   if (document.pointerLockElement === $('c')) {
-    // it works after all: forget every refusal and put the wording back
-    lockFailed = lockNagged = lockExitWanted = false;
-    paintGate();
-    $('clickplay').classList.add('hidden');
+    lockFailed = lockExitWanted = false;    // it works after all
     return;
   }
   const wanted = lockExitWanted;
@@ -6022,23 +6076,7 @@ document.addEventListener('pointerlockchange', () => {
 
      An exit we did not ask for is the player asking for the menu, so treat it
      as one. */
-  if (!wanted && !state.paused) { pause(true); return; }
-  // Losing the lock shows a click-to-resume prompt rather than leaving you
-  // invisibly not-in-control -- but not on top of a menu, and not if locking
-  // is refused outright, which would put the wall straight back.
-  if (!state.paused && !lockFailed) $('clickplay').classList.remove('hidden');
-});
-/* The gate takes any pointer, because it is the one thing both modes need to
-   get past. In mouse mode onPress still swallows this same click below -- the
-   one that grabs the mouse must not also pull the trigger. */
-$('clickplay').addEventListener('pointerdown', (e) => {
-  e.preventDefault();
-  if (touchMode()) {
-    $('clickplay').classList.add('hidden');
-    lastClick = 'touch ready';
-    return;
-  }
-  requestLock();
+  if (!wanted && !state.paused) pause(true);
 });
 function pause(on) {
   $('coursepick').style.display = (state.mode === 'trainer') ? '' : 'none';
@@ -6067,13 +6105,13 @@ function applyLook(dx, dy) {
 addEventListener('mousemove', (e) => {
   if (!state.running || state.paused) return;
   if (touchMode()) return;          // the touch layer owns looking in that mode
+  /* No lock: look by dragging, so a match is playable from the first frame
+     whether or not the pointer has been captured yet. This used to require
+     lockFailed -- meaning it only worked once a lock had been REFUSED, and a
+     player who simply had not clicked yet could not look at all. */
   if (document.pointerLockElement !== $('c')) {
-    // No lock: fall back to click-drag looking so the game stays playable.
-    if (!lockFailed || !dragLook) return;
-    const s2 = settings.sens * 0.12;
-    me.yaw -= (e.movementX || 0) * s2;
-    me.pitch = clamp(me.pitch - (e.movementY || 0) * s2, -85, 85);
-    me.yaw = ((me.yaw % 360) + 360) % 360;
+    if (!dragLook) return;
+    applyLook(e.movementX || 0, e.movementY || 0);
     return;
   }
   applyLook(e.movementX, e.movementY);
@@ -6084,18 +6122,12 @@ let lastClick = '-';
 function onPress(e) {
   if (!state.running) { lastClick = 'not in a match'; return; }
   if (state.paused) { lastClick = 'paused'; return; }
-  if (document.pointerLockElement !== $('c')) requestLock();
-
-  // The "click to play" overlay swallows exactly one click, the one that grabs
-  // the mouse. After that every click ACTS, locked or not: gating actions on
-  // pointer lock meant a browser that quietly refused it made the game
-  // unclickable with no way to tell.
-  const cp = $('clickplay');
-  if (!cp.classList.contains('hidden')) {
-    cp.classList.add('hidden');
-    lastClick = touchMode() ? 'touch ready' : 'grabbed mouse';
-    return;
-  }
+  /* The first click in the game is what captures the mouse -- there is no
+     gate asking for it any more -- and it ACTS as well as captures. Swallowing
+     it would mean a shot that silently did nothing, which is the same
+     complaint the gate itself was. requestLock() is throttled and no-ops when
+     the pointer is already ours, so asking on every click costs nothing. */
+  requestLock();
   if (e.button === 0) {
     /* The one control the death screen has, and it goes both ways: a click
        during the replay drops you onto the spot, a click on the spot starts
@@ -6319,6 +6351,10 @@ function touchSetup() {
   for (const b of document.querySelectorAll('#tbtns .tb')) {
     const act = b.dataset.act;
     const down = () => {
+      /* While editing, FIRE picks tiles instead of committing them. Going
+         through onPress/onRelease here is what made a touch edit impossible:
+         the release applied, so one tap cut one tile and ended the edit. */
+      if (act === 'fire' && state.editing) { toggleEditTile(); return; }
       if (act === 'fire') { b.classList.add('down'); onPress({ button: 0 }); }
       else if (act === 'jump') { b.classList.add('down'); keys[settings.keys.jump] = true; }
       else if (act === 'crouch') keys[settings.keys.crouch] = !keys[settings.keys.crouch];
@@ -6334,6 +6370,7 @@ function touchSetup() {
       paintTouchToggles();
     };
     const up = () => {
+      if (act === 'fire' && state.editing) return;
       if (act === 'fire') { b.classList.remove('down'); onRelease({ button: 0 }); }
       else if (act === 'jump') { b.classList.remove('down'); keys[settings.keys.jump] = false; }
     };
@@ -6345,6 +6382,15 @@ function touchSetup() {
     });
     b.addEventListener('pointerup', (e) => { e.preventDefault(); up(); });
     b.addEventListener('pointercancel', up);
+  }
+
+  for (const b of document.querySelectorAll('#tedit button')) {
+    b.addEventListener('pointerdown', (e) => {
+      if (!touchMode()) return;
+      e.preventDefault();
+      if (b.dataset.act === 'applyedit') applyEdit(); else cancelEdit();
+      syncTouchUI(true);
+    });
   }
 
   /* The two the keyboard owns and a touchscreen has no key for. Without them a
@@ -6366,6 +6412,17 @@ function touchSetup() {
     e.preventDefault();
     $('board').classList.add('hidden');
   });
+}
+/* One tap, one tile, either way. `edit.dragging` deliberately stays false:
+   updateEdit() re-adds whatever the crosshair is on while dragging, which on a
+   touchscreen would undo a de-select the same frame it happened. */
+function toggleEditTile() {
+  if (!state.editing) return;
+  const i = editTileUnderAim();
+  if (i < 0) return;
+  if (!((edit.mask >> i) & 1)) return;      // already cut: nothing to cut again
+  edit.sel ^= (1 << i);
+  Audio_.blip(((edit.sel >> i) & 1) ? 660 : 440, 0.03, 'square', 0.06);
 }
 /* The latching buttons have to show what they latched, and two of them can be
    turned off by something other than the button -- picking up a build piece
@@ -6416,7 +6473,6 @@ function setInputMode(m) {
   settings.input = m;
   saveSettings();
   if (changed) {
-    paintGate();
     // release everything the outgoing mode owned
     applyButtons(0);
     firing = false; dragLook = false; state.ads = false;
@@ -6425,15 +6481,10 @@ function setInputMode(m) {
     keys[k.forward] = keys[k.back] = keys[k.left] = keys[k.right] = keys[k.jump] = false;
     const knob = $('tstick').firstElementChild;
     if (knob) knob.style.transform = '';
-    /* Coming back to the mouse mid-match means the pointer is not captured any
-       more, so put the gate up rather than leaving a live match you cannot
-       aim in. Going the other way needs no gate: the touch layer is live the
-       moment it is on screen. */
-    if (!touchMode() && state.running && !state.paused) {
-      $('clickplay').classList.remove('hidden');
-    } else if (touchMode()) {
-      releaseLock();
-    }
+    // Coming back to the mouse mid-match: the next click in the game grabs the
+    // pointer again. Going the other way, hand it back -- a touch player has
+    // no use for a captured cursor.
+    if (touchMode()) releaseLock();
   }
   drawInputPickers();
   syncTouchUI(true);
@@ -6476,13 +6527,22 @@ let touchUIHint = '';
 function syncTouchUI(force) {
   const tm = touchMode();
   const show = tm && state.running && !state.paused;
-  const h = (tm ? 1 : 0) + '|' + (show ? 1 : 0);
+  const ed = show && !!state.editing;
+  const h = (tm ? 1 : 0) + '|' + (show ? 1 : 0) + '|' + (ed ? 1 : 0);
   if (force || h !== touchUIHint) {
     touchUIHint = h;
     latchHint = '';                 // the buttons are about to be re-shown
     document.body.classList.toggle('touchmode', tm);
     $('touch').classList.toggle('hidden', !show);
-    if (show) drawTouchSlots();
+    $('touch').classList.toggle('editing', ed);
+    $('tedit').classList.toggle('hidden', !ed);
+    if (show && !ed) drawTouchSlots();
+  }
+  // CONFIRM means nothing until something is picked, and saying so is cheaper
+  // than letting a player tap it and wonder why the piece did not change
+  if (ed) {
+    const ok = $('tedit').querySelector('.ok');
+    if (ok) ok.disabled = !edit.sel;
   }
   if (show) paintTouchToggles();
 }
@@ -6667,10 +6727,23 @@ function frame(now) {
   /* A living watcher still has hands on the keyboard while the replay owns
      the camera, and running the controller would walk them somewhere they
      cannot see. */
+  /* Nobody moves during the countdown. It is the beat where everyone reads the
+     score and finds their feet, and a player who could walk out of spawn
+     before the round went live started it with ground nobody else had. Looking
+     around stays free -- freezing the camera reads as a lag spike, not a rule.
+     The server refuses off-phase movement as well; this is what makes it feel
+     like a rule rather than rubber-banding. */
   if (state.running && !state.paused && !state.dead && !state.spectator &&
       !deathcam.active && state.phase !== 'ended') {
-    updateLocal(dt);
+    if (state.phase === 'countdown') {
+      me.vel[0] = me.vel[2] = 0;
+      if (me.vel[1] > 0) me.vel[1] = 0;      // no held jump carrying over
+      updateLocal(dt, true);                 // gravity and ground only
+    } else {
+      updateLocal(dt);
+    }
   }
+  drawCountdown();
 
   if (state.running) {
     /* A death camera owns both the camera and the snapshot clock, so the live
